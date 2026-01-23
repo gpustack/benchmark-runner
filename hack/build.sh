@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+source "${ROOT_DIR}/hack/lib/init.sh"
+
+function build() {
+  uv build
+}
+
+function prepare_dependencies() {
+  DEPS_ONLY=true bash "${ROOT_DIR}/hack/install.sh"
+}
+
+function set_version() {
+  local version_file="${ROOT_DIR}/guidellm_box/__init__.py"
+  local pyproject_file="${ROOT_DIR}/pyproject.toml"
+  local git_commit="${GIT_COMMIT:-HEAD}"
+  local git_commit_short="${git_commit:0:7}"
+
+  guidellm_box::log::infoinfo "setting version to $GIT_VERSION"
+  guidellm_box::log::infoinfo "setting git commit to $git_commit_short"
+
+  # Replace the __version__ variable in the __init__.py file
+  guidellm_box::util::sed "s/__version__ = .*/__version__ = '${GIT_VERSION}'/" "${version_file}"
+  guidellm_box::util::sed "s/__git_commit__ = .*/__git_commit__ = '${git_commit_short}'/" "${version_file}"
+
+  # Update the version in pyproject.toml
+  guidellm_box::util::sed "s/^version = .*/version = \"${GIT_VERSION}\"/" "${pyproject_file}"
+}
+
+function restore_version_file() {
+  local version_file="${ROOT_DIR}/guidellm_box/__init__.py"
+  local pyproject_file="${ROOT_DIR}/pyproject.toml"
+  git checkout -- "${version_file}" "${pyproject_file}"
+}
+
+#
+# main
+#
+
+guidellm_box::log::infoinfo "+++ BUILD +++"
+prepare_dependencies
+set_version
+build
+restore_version_file
+guidellm_box::log::infoinfo "--- BUILD ---"
