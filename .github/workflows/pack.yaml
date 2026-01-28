@@ -37,9 +37,9 @@ on:
 
 env:
   INPUT_PYTHON_VERSION: 3.11
-  INPUT_USERNAME: gpustack
+  INPUT_USERNAME: ${{ secrets.CI_DOCKERHUB_USERNAME || 'gpustack' }}
   INPUT_PASSWORD: ${{ secrets.CI_DOCKERHUB_PASSWORD }}
-  INPUT_NAMESPACE: gpustack
+  INPUT_NAMESPACE: ${{ secrets.CI_DOCKERHUB_NAMESPACE || 'gpustack' }}
   INPUT_REPOSITORY: guidellm-box
 
 jobs:
