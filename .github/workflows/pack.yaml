@@ -33,7 +33,7 @@ on:
       - "v*-dev"
     paths:
       - ".github/workflows/pack.yaml"
-      - "pack/**"
+      - "Dockerfile"
 
 env:
   INPUT_PYTHON_VERSION: 3.11
@@ -183,7 +183,7 @@ jobs:
           provenance: true
           sbom: true
           push: ${{ github.event_name != 'pull_request' }}
-          file: ${{ github.workspace }}/pack/Dockerfile
+          file: ${{ github.workspace }}/Dockerfile
           context: ${{ github.workspace }}
           platforms: "linux/amd64,linux/arm64"
           build-args: |
