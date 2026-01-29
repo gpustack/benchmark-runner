@@ -28,8 +28,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # Install all optional dependencies
-    "guidellm[all]",
     "pre-commit>=3.7.1",
 ]
 
