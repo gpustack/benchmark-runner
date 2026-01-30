@@ -27,6 +27,6 @@ function download_deps() {
 # main
 #
 
-guidellm_box::log::infoinfo "+++ DEPENDENCIES +++"
+benchmark_runner::log::infoinfo "+++ DEPENDENCIES +++"
 download_deps
-guidellm_box::log::infoinfo "--- DEPENDENCIES ---"
+benchmark_runner::log::infoinfo "--- DEPENDENCIES ---"

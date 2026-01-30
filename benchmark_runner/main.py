@@ -3,11 +3,11 @@
 # Modifications have been made to fit project requirements.
 
 """
-GuideLLM command-line interface entry point.
+Benchmark Runner command-line interface entry point.
 
-This is the main CLI for GuideLLM, customized for this project.
+This is the main CLI for Benchmark Runner, customized for this project.
 Key customizations:
-- Uses custom progress and output modules (see guidellm_box.progress, guidellm_box.chained_progress).
+- Uses custom progress and output modules (see benchmark_runner.progress, benchmark_runner.chained_progress).
 - Removes unnecessary subcommands, focusing on core benchmark and config functionality.
 
 Provides:
@@ -22,10 +22,10 @@ from pathlib import Path
 
 import click
 from pydantic import ValidationError
-from guidellm_box.chained_progress import ChainedBenchmarkerProgress
+from benchmark_runner.chained_progress import ChainedBenchmarkerProgress
 from guidellm.benchmark.entrypoints import benchmark_generative_text
-from guidellm_box.progress import ServerBenchmarkerProgress
-from guidellm_box.sharegpt_adapter import prepare_datasets
+from benchmark_runner.progress import ServerBenchmarkerProgress
+from benchmark_runner.sharegpt_adapter import prepare_datasets
 
 try:
     import uvloop
@@ -50,9 +50,11 @@ STRATEGY_PROFILE_CHOICES: list[str] = list(get_literal_vals(ProfileType | Strate
 
 
 @click.group()
-@click.version_option(package_name="guidellm", message="guidellm version: %(version)s")
+@click.version_option(
+    package_name="benchmark-runner", message="benchmark-runner version: %(version)s"
+)
 def cli():
-    """GuideLLM CLI for benchmarking, preprocessing, and testing language models."""
+    """Benchmark Runner CLI for benchmarking, preprocessing, and testing language models."""
 
 
 @cli.group(
@@ -71,7 +73,7 @@ def benchmark():
         "Supports multiple backends, data sources, strategies, and output formats. "
         "Configuration can be loaded from a scenario file or specified via options."
     ),
-    context_settings={"auto_envvar_prefix": "GUIDELLM"},
+    context_settings={"auto_envvar_prefix": "BENCHMARK_RUNNER"},
 )
 @click.option(
     "--scenario",

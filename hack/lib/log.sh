@@ -14,7 +14,7 @@ log_level="${LOG_LEVEL:-"debug"}"
 log_colorful="${LOG_COLORFUL:-"true"}"
 
 # Handler for when we exit automatically on an error.
-guidellm_box::log::infoerrexit() {
+benchmark_runner::log::infoerrexit() {
   local err="${PIPESTATUS[*]}"
 
   # if the shell we are in doesn't have errexit set (common in subshells) then
@@ -22,13 +22,13 @@ guidellm_box::log::infoerrexit() {
   set +o | grep -qe "-o errexit" || return
 
   set +o xtrace
-  guidellm_box::log::infopanic "${BASH_SOURCE[1]}:${BASH_LINENO[0]} '${BASH_COMMAND}' exited with status ${err}" "${1:-1}"
+  benchmark_runner::log::infopanic "${BASH_SOURCE[1]}:${BASH_LINENO[0]} '${BASH_COMMAND}' exited with status ${err}" "${1:-1}"
 }
 
-guidellm_box::log::infoinstall_errexit() {
+benchmark_runner::log::infoinstall_errexit() {
   # trap ERR to provide an error handler whenever a command exits nonzero, this
   # is a more verbose version of set -o errexit
-  trap 'guidellm_box::log::infoerrexit' ERR
+  trap 'benchmark_runner::log::infoerrexit' ERR
 
   # setting errtrace allows our ERR trap handler to be propagated to functions,
   # expansions and subshells
@@ -36,7 +36,7 @@ guidellm_box::log::infoinstall_errexit() {
 }
 
 # Debug level logging.
-guidellm_box::log::infodebug() {
+benchmark_runner::log::infodebug() {
   [[ ${log_level} == "debug" ]] || return 0
   local message="${2:-}"
 
@@ -50,7 +50,7 @@ guidellm_box::log::infodebug() {
 }
 
 # Info level logging.
-guidellm_box::log::infoinfo() {
+benchmark_runner::log::infoinfo() {
   [[ ${log_level} == "debug" ]] || [[ ${log_level} == "info" ]] || return 0
   local message="${2:-}"
 
@@ -68,7 +68,7 @@ guidellm_box::log::infoinfo() {
 }
 
 # Warn level logging.
-guidellm_box::log::infowarn() {
+benchmark_runner::log::infowarn() {
   local message="${2:-}"
 
   local timestamp
@@ -85,7 +85,7 @@ guidellm_box::log::infowarn() {
 }
 
 # Error level logging, log an error but keep going, don't dump the stack or exit.
-guidellm_box::log::infoerror() {
+benchmark_runner::log::infoerror() {
   local message="${2:-}"
 
   local timestamp
@@ -102,7 +102,7 @@ guidellm_box::log::infoerror() {
 }
 
 # Fatal level logging, log an error but exit with 1, don't dump the stack or exit.
-guidellm_box::log::infofatal() {
+benchmark_runner::log::infofatal() {
   local message="${2:-}"
 
   local timestamp
@@ -125,7 +125,7 @@ guidellm_box::log::infofatal() {
 #   $1 Message to log with the error
 #   $2 The error code to return
 #   $3 The number of stack frames to skip when printing.
-guidellm_box::log::infopanic() {
+benchmark_runner::log::infopanic() {
   local message="${1:-}"
   local code="${2:-1}"
 

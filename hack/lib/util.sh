@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 
-function guidellm_box::util::sed() {
+function benchmark_runner::util::sed() {
   if ! sed -i "$@" >/dev/null 2>&1; then
     # back off none GNU sed
     sed -i "" "$@"
   fi
 }
 
-function guidellm_box::util::get_os_name() {
+function benchmark_runner::util::get_os_name() {
   # Support overriding by BUILD_OS for cross-building
   local os_name="${BUILD_OS:-}"
   if [[ -n "$os_name" ]]; then
@@ -18,10 +18,10 @@ function guidellm_box::util::get_os_name() {
   fi
 }
 
-function guidellm_box::util::is_darwin() {
-  [[ "$(guidellm_box::util::get_os_name)" == "darwin" ]]
+function benchmark_runner::util::is_darwin() {
+  [[ "$(benchmark_runner::util::get_os_name)" == "darwin" ]]
 }
 
-function guidellm_box::util::is_linux() {
-  [[ "$(guidellm_box::util::get_os_name)" == "linux" ]]
+function benchmark_runner::util::is_linux() {
+  [[ "$(benchmark_runner::util::get_os_name)" == "linux" ]]
 }

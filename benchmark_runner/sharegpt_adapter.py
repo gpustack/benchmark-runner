@@ -1,5 +1,5 @@
 from pathlib import Path
-from guidellm_box.sharegpt_to_guidellm import convert_sharegpt_to_guidellm
+from benchmark_runner.sharegpt_to_guidellm import convert_sharegpt_to_guidellm
 
 
 class ShareGPTAdapter:

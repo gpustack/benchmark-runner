@@ -10,7 +10,7 @@ source "${ROOT_DIR}/hack/lib/init.sh"
 function lint() {
   local path="$1"
 
-  guidellm_box::log::infoinfo "linting ${path}"
+  benchmark_runner::log::infoinfo "linting ${path}"
   uv run pre-commit run --all-files --show-diff-on-failure
 }
 
@@ -18,6 +18,6 @@ function lint() {
 # main
 #
 
-guidellm_box::log::infoinfo "+++ LINT +++"
-lint "guidellm_box"
-guidellm_box::log::infoinfo "--- LINT ---"
+benchmark_runner::log::infoinfo "+++ LINT +++"
+lint "benchmark_runner"
+benchmark_runner::log::infoinfo "--- LINT ---"

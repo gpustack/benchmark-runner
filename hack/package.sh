@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "${ROOT_DIR}/hack/lib/init.sh"
 
 PACKAGE_NAMESPACE=${PACKAGE_NAMESPACE:-gpustack}
-PACKAGE_REPOSITORY=${PACKAGE_REPOSITORY:-guidellm_box}
+PACKAGE_REPOSITORY=${PACKAGE_REPOSITORY:-benchmark-runner}
 PACKAGE_ARCH=${PACKAGE_ARCH:-$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/')}
 PACKAGE_TAG=${PACKAGE_TAG:-dev}
 PACKAGE_WITH_CACHE=${PACKAGE_WITH_CACHE:-true}
@@ -16,12 +16,12 @@ PACKAGE_PUSH=${PACKAGE_PUSH:-false}
 
 function pack() {
     if ! command -v docker &>/dev/null; then
-        guidellm_box::log::infofatal "Docker is not installed. Please install Docker to use this target."
+        benchmark_runner::log::infofatal "Docker is not installed. Please install Docker to use this target."
         exit 1
     fi
 
     if ! docker buildx inspect --builder "gpustack" &>/dev/null; then
-        guidellm_box::log::infoinfo "Creating new buildx builder 'gpustack'"
+        benchmark_runner::log::infoinfo "Creating new buildx builder 'gpustack'"
         docker run --rm --privileged tonistiigi/binfmt:qemu-v9.2.2-52 --uninstall qemu-*
         docker run --rm --privileged tonistiigi/binfmt:qemu-v9.2.2-52 --install all
         docker buildx create \
@@ -32,11 +32,11 @@ function pack() {
             --bootstrap
     fi
 
-    LABELS=("org.opencontainers.image.source=https://github.com/gpustack/guidellm-box" "org.opencontainers.image.version=main" "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo "unknown")" "org.opencontainers.image.created=$(date +"%Y-%m-%dT%H:%M:%S.%s")");
+    LABELS=("org.opencontainers.image.source=https://github.com/gpustack/benchmark-runner" "org.opencontainers.image.version=main" "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo "unknown")" "org.opencontainers.image.created=$(date +"%Y-%m-%dT%H:%M:%S.%s")");
     TAG="${PACKAGE_NAMESPACE}/${PACKAGE_REPOSITORY}:${PACKAGE_TAG}"
     EXTRA_ARGS=()
 	if [[ "${PACKAGE_WITH_CACHE}" == "true" ]]; then
-		EXTRA_ARGS+=("--cache-from=type=registry,ref=gpustack/build-cache:guidellm-box-main")
+		EXTRA_ARGS+=("--cache-from=type=registry,ref=gpustack/build-cache:benchmark-runner-main")
 	fi
 	if [[ "${PACKAGE_PUSH}" == "true" ]]; then
 		EXTRA_ARGS+=("--push")
@@ -44,7 +44,7 @@ function pack() {
 	for label in "${LABELS[@]}"; do
 		EXTRA_ARGS+=("--label" "${label}")
 	done
-    guidellm_box::log::infoinfo "Building '${TAG}' platform 'linux/${PACKAGE_ARCH}'"
+    benchmark_runner::log::infoinfo "Building '${TAG}' platform 'linux/${PACKAGE_ARCH}'"
     set -x
     docker buildx build \
         --pull \
@@ -63,6 +63,6 @@ function pack() {
     set +x
 }
 
-guidellm_box::log::infoinfo "+++ PACKAGE +++"
+benchmark_runner::log::infoinfo "+++ PACKAGE +++"
 pack
-guidellm_box::log::infoinfo "--- PACKAGE ---"
+benchmark_runner::log::infoinfo "--- PACKAGE ---"

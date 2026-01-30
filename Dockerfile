@@ -1,5 +1,5 @@
 
-ARG GUIDELLM_BOX_BASE_IMAGE=base
+ARG BENCHMARK_RUNNER_BASE_IMAGE=base
 
 # Stage Base
 
@@ -125,9 +125,9 @@ EOT
         && rm -rf /tmp/*
 EOF
 
-# Stage guidellm-box
+# Stage benchmark-runner
 
-FROM ${GUIDELLM_BOX_BASE_IMAGE} AS guidellm-box
+FROM ${BENCHMARK_RUNNER_BASE_IMAGE} AS benchmark-runner
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 
 ARG TARGETPLATFORM
@@ -135,8 +135,8 @@ ARG TARGETOS
 ARG TARGETARCH
 
 ## Step: Download ShareGPT dataset
-RUN mkdir -p /workspace/guidellm-box/sharegpt_data \
-    && cd /workspace/guidellm-box/sharegpt_data \
+RUN mkdir -p /workspace/benchmark-runner/sharegpt_data \
+    && cd /workspace/benchmark-runner/sharegpt_data \
     && FILE=ShareGPT_V3_unfiltered_cleaned_split.json \
     && if [ ! -f "$FILE" ]; then \
         wget --progress=bar:force:noscroll -q https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/$FILE; \
@@ -144,9 +144,9 @@ RUN mkdir -p /workspace/guidellm-box/sharegpt_data \
         echo "$FILE already exists."; \
     fi
 
-## Step: Install GuideLLM Box
+## Step: Install Benchmark Runner
 RUN --mount=type=cache,target=/root/.cache \
-    --mount=type=bind,target=/workspace/guidellm-box,rw \
+    --mount=type=bind,target=/workspace/benchmark-runner,rw \
     --mount=type=bind,from=ghcr.io/oras-project/oras:v1.3.0,source=/bin/oras,dst=/bin/oras <<EOF
     set -e
     export POETRY_NO_CACHE=0
@@ -154,25 +154,25 @@ RUN --mount=type=cache,target=/root/.cache \
     export UV_SYSTEM_PYTHON=1
     export UV_LINK_MODE=copy
 
-    cd /workspace/guidellm-box \
-        && git config --global --add safe.directory /workspace/guidellm-box \
+    cd /workspace/benchmark-runner \
+        && git config --global --add safe.directory /workspace/benchmark-runner \
         && make build
 
-    # Install GuideLLM Box.
-    WHEEL_PACKAGE="$(ls /workspace/guidellm-box/dist/*.whl)[all]";
+    # Install Benchmark Runner.
+    WHEEL_PACKAGE="$(ls /workspace/benchmark-runner/dist/*.whl)[all]";
     uv pip install --extra-index-url https://download.pytorch.org/whl/cpu/ \
         ${WHEEL_PACKAGE}
 
     # Review
     uv pip tree \
-        --package guidellm-box
-    guidellm-box --version
+        --package benchmark-runner
+    benchmark-runner --version
 
     # Cleanup
     rm -rf /var/tmp/* \
         && rm -rf /tmp/* \
-        && rm -rf /workspace/guidellm-box/dist
+        && rm -rf /workspace/benchmark-runner/dist
 EOF
 
-ENTRYPOINT [ "guidellm-box" ]
+ENTRYPOINT [ "benchmark-runner" ]
 CMD [ "benchmark", "run" ]

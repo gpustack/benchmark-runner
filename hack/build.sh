@@ -16,24 +16,24 @@ function prepare_dependencies() {
 }
 
 function set_version() {
-  local version_file="${ROOT_DIR}/guidellm_box/__init__.py"
+  local version_file="${ROOT_DIR}/benchmark_runner/__init__.py"
   local pyproject_file="${ROOT_DIR}/pyproject.toml"
   local git_commit="${GIT_COMMIT:-HEAD}"
   local git_commit_short="${git_commit:0:7}"
 
-  guidellm_box::log::infoinfo "setting version to $GIT_VERSION"
-  guidellm_box::log::infoinfo "setting git commit to $git_commit_short"
+  benchmark_runner::log::infoinfo "setting version to $GIT_VERSION"
+  benchmark_runner::log::infoinfo "setting git commit to $git_commit_short"
 
   # Replace the __version__ variable in the __init__.py file
-  guidellm_box::util::sed "s/__version__ = .*/__version__ = '${GIT_VERSION}'/" "${version_file}"
-  guidellm_box::util::sed "s/__git_commit__ = .*/__git_commit__ = '${git_commit_short}'/" "${version_file}"
+  benchmark_runner::util::sed "s/__version__ = .*/__version__ = '${GIT_VERSION}'/" "${version_file}"
+  benchmark_runner::util::sed "s/__git_commit__ = .*/__git_commit__ = '${git_commit_short}'/" "${version_file}"
 
   # Update the version in pyproject.toml
-  guidellm_box::util::sed "s/^version = .*/version = \"${GIT_VERSION}\"/" "${pyproject_file}"
+  benchmark_runner::util::sed "s/^version = .*/version = \"${GIT_VERSION}\"/" "${pyproject_file}"
 }
 
 function restore_version_file() {
-  local version_file="${ROOT_DIR}/guidellm_box/__init__.py"
+  local version_file="${ROOT_DIR}/benchmark_runner/__init__.py"
   local pyproject_file="${ROOT_DIR}/pyproject.toml"
   git checkout -- "${version_file}" "${pyproject_file}"
 }
@@ -42,9 +42,9 @@ function restore_version_file() {
 # main
 #
 
-guidellm_box::log::infoinfo "+++ BUILD +++"
+benchmark_runner::log::infoinfo "+++ BUILD +++"
 prepare_dependencies
 set_version
 build
 restore_version_file
-guidellm_box::log::infoinfo "--- BUILD ---"
+benchmark_runner::log::infoinfo "--- BUILD ---"

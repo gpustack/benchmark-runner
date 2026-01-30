@@ -19,5 +19,5 @@ for file in "${ROOT_DIR}/hack/lib/"*; do
   fi
 done
 
-guidellm_box::log::infoinstall_errexit
-guidellm_box::version::get_version_vars
+benchmark_runner::log::infoinstall_errexit
+benchmark_runner::version::get_version_vars

@@ -41,6 +41,6 @@ jobs:
       - name: Upload wheel as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: guidellm-box-dist
+          name: benchmark-runner-dist
           path: dist/*.whl
           retention-days: 5

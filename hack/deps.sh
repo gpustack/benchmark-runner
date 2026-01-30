@@ -17,6 +17,6 @@ function deps() {
 # main
 #
 
-guidellm_box::log::infoinfo "+++ DEPS +++"
+benchmark_runner::log::infoinfo "+++ DEPS +++"
 deps
-guidellm_box::log::infoinfo "--- DEPS ---"
+benchmark_runner::log::infoinfo "--- DEPS ---"

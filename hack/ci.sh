@@ -18,6 +18,6 @@ function ci() {
 # main
 #
 
-guidellm_box::log::infoinfo "+++ CI +++"
+benchmark_runner::log::infoinfo "+++ CI +++"
 ci "$@"
-guidellm_box::log::infoinfo "--- CI ---"
+benchmark_runner::log::infoinfo "--- CI ---"

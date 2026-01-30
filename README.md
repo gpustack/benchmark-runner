@@ -1,13 +1,13 @@
-GuideLLM Box
-============
+Benchmark Runner
+================
 
-GuideLLM Box is a thin wrapper around GuideLLM that provides a simplified CLI,
+Benchmark Runner is a thin wrapper around GuideLLM that provides a simplified CLI,
 custom progress reporting, and ShareGPT dataset preparation for benchmarking
 generative models.
 
 What it adds
 ------------
-- A streamlined `guidellm-box` CLI focused on benchmark and config commands.
+- A streamlined `benchmark-runner` CLI focused on benchmark and config commands.
 - Optional server-side progress updates during benchmarks.
 - ShareGPT dataset conversion to GuideLLM-compatible JSONL.
 - A JSON summary output format for benchmark reports.
@@ -25,13 +25,13 @@ Usage
 Show available commands:
 
 ```bash
-guidellm-box --help
+benchmark-runner --help
 ```
 
 Run a benchmark:
 
 ```bash
-guidellm-box benchmark \
+benchmark-runner benchmark \
   --target http://localhost:8000 \
   --profile constant \
   --rate 10 \
@@ -45,7 +45,7 @@ Progress reporting
 You can send progress updates to a server endpoint during a benchmark:
 
 ```bash
-guidellm-box benchmark \
+benchmark-runner benchmark \
   --target http://localhost:8000 \
   --profile constant \
   --rate 10 \
@@ -59,13 +59,13 @@ guidellm-box benchmark \
 ShareGPT dataset support
 ------------------------
 If a dataset filename contains "sharegpt" and ends with `.json` or `.jsonl`,
-GuideLLM Box will convert it to a GuideLLM-compatible JSONL file before running
+Benchmark Runner will convert it to a GuideLLM-compatible JSONL file before running
 the benchmark.
 
 Example:
 
 ```bash
-guidellm-box benchmark \
+benchmark-runner benchmark \
   --target http://localhost:8000 \
   --profile constant \
   --rate 10 \
@@ -76,11 +76,11 @@ guidellm-box benchmark \
 
 Outputs
 -------
-GuideLLM Box supports GuideLLM outputs plus a JSON summary output.
+Benchmark Runner supports GuideLLM outputs plus a JSON summary output.
 To save summary JSON:
 
 ```bash
-guidellm-box benchmark \
+benchmark-runner benchmark \
   --target http://localhost:8000 \
   --profile constant \
   --rate 10 \
@@ -96,7 +96,7 @@ Docker
 This repository includes a Dockerfile used to build a runtime image.
 
 ```bash
-docker build -t guidellm-box .
+docker build -t benchmark-runner .
 ```
 
 Development

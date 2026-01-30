@@ -473,7 +473,7 @@ wheels = [
 ]
 
 [[package]]
-name = "guidellm-box"
+name = "benchmark-runner"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
