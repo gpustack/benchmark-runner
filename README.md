@@ -11,6 +11,7 @@ What it adds
 - Optional server-side progress updates during benchmarks.
 - ShareGPT dataset conversion to GuideLLM-compatible JSONL.
 - A JSON summary output format for benchmark reports.
+- Custom response handler for accurate TTFT/ITL metrics with reasoning tokens (e.g., DeepSeek-R1).
 
 Install
 -------
@@ -89,6 +90,21 @@ benchmark-runner benchmark \
   --processor PROCESSOR_PATH \
   --outputs summary_json \
   --output-dir ./benchmarks
+```
+
+Reasoning Tokens Support
+-------------------------
+For models that output reasoning tokens (e.g., DeepSeek-R1, o1-preview), use the custom
+response handler to get accurate TTFT and ITL metrics:
+
+```bash
+benchmark-runner benchmark run \
+  --target http://localhost:8000/v1 \
+  --backend openai_http \
+  --backend-kwargs '{"response_handlers": {"chat_completions": "chat_completions_with_reasoning"}}' \
+  --model deepseek-ai/DeepSeek-R1-Distill-Qwen-7B \
+  --data your-dataset \
+  --max-requests 100
 ```
 
 Docker

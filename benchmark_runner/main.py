@@ -26,6 +26,7 @@ from benchmark_runner.chained_progress import ChainedBenchmarkerProgress
 from guidellm.benchmark.entrypoints import benchmark_generative_text
 from benchmark_runner.progress import ServerBenchmarkerProgress
 from benchmark_runner.sharegpt_adapter import prepare_datasets
+from guidellm.backends.response_handlers import GenerationResponseHandlerFactory
 
 try:
     import uvloop
@@ -471,6 +472,26 @@ def run(**kwargs):  # noqa: C901
         raise click.BadParameter(
             errs[0]["msg"], ctx=click.get_current_context(), param_hint=param_name
         ) from err
+
+    # Convert string handler names to actual handler classes
+    if args.backend_kwargs and "response_handlers" in args.backend_kwargs:
+        handlers = args.backend_kwargs["response_handlers"]
+        if isinstance(handlers, dict):
+            for key, value in handlers.items():
+                if isinstance(value, str):
+                    # Look up the handler class from the factory registry
+                    handler_class = (
+                        GenerationResponseHandlerFactory.get_registered_object(value)
+                    )
+                    if handler_class:
+                        handlers[key] = handler_class
+                    else:
+                        registry = GenerationResponseHandlerFactory.registry or {}
+                        available = ", ".join(registry.keys())
+                        raise ValueError(
+                            f"Unknown response handler: '{value}'. "
+                            f"Available handlers: {available}"
+                        )
 
     if uvloop is not None:
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
