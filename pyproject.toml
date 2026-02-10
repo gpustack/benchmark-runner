@@ -23,7 +23,7 @@ keywords = [
     "guidellm"
 ]
 dependencies = [
-    "guidellm>=0.5.1"
+    "guidellm>=0.5.1",
 ]
 
 [dependency-groups]
