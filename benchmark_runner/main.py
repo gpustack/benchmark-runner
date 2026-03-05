@@ -18,6 +18,8 @@ Provides:
 from __future__ import annotations
 
 import asyncio
+import os
+import platform
 from pathlib import Path
 
 import click
@@ -42,12 +44,44 @@ from guidellm.benchmark import (
 )
 from guidellm.scheduler import StrategyType
 from guidellm.schemas import GenerativeRequestType
-from guidellm.settings import print_config
+from guidellm.settings import print_config, settings as guidellm_settings
 from guidellm.utils import Console, DefaultGroupHandler, get_literal_vals
 from guidellm.utils import cli as cli_tools
 
-STRATEGY_PROFILE_CHOICES: list[str] = list(get_literal_vals(ProfileType | StrategyType))
 """Available strategy and profile type choices for benchmark execution."""
+STRATEGY_PROFILE_CHOICES: list[str] = list(get_literal_vals(ProfileType | StrategyType))
+
+
+DISABLE_MACOS_WORKAROUNDS_ENV = "BENCHMARK_RUNNER_DISABLE_MACOS_WORKAROUNDS"
+"""Set to 1/true/yes to disable runtime macOS defaults for process/data workers."""
+
+
+def apply_macos_runtime_workarounds(kwargs: dict) -> None:
+    if platform.system() != "Darwin":
+        return
+
+    if os.environ.get(DISABLE_MACOS_WORKAROUNDS_ENV, "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return
+
+    # Why this exists:
+    # - GuideLLM defaults to multiprocessing "fork", which can hang on macOS in
+    #   mixed runtime stacks (tokenizers/torch/http clients).
+    # - See Python multiprocessing docs and macOS fork notes:
+    #   https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+    #   https://bugs.python.org/issue33725
+    if (
+        "GUIDELLM__MP_CONTEXT_TYPE" not in os.environ
+        and guidellm_settings.mp_context_type == "fork"
+    ):
+        guidellm_settings.mp_context_type = "spawn"
+
+    # Keep DataLoader single-process by default on macOS unless user overrides it.
+    if "data_num_workers" not in kwargs:
+        kwargs["data_num_workers"] = 0
 
 
 @click.group()
@@ -393,6 +427,7 @@ def benchmark():
 def run(**kwargs):  # noqa: C901
     # Only set CLI args that differ from click defaults
     kwargs = cli_tools.set_if_not_default(click.get_current_context(), **kwargs)
+    apply_macos_runtime_workarounds(kwargs)
 
     # Handle remapping for request params
     request_type = kwargs.pop("request_type", None)

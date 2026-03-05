@@ -12,6 +12,7 @@ What it adds
 - ShareGPT dataset conversion to GuideLLM-compatible JSONL.
 - A JSON summary output format for benchmark reports.
 - Custom response handler for accurate TTFT/ITL metrics with reasoning tokens (e.g., DeepSeek-R1).
+- Optional backend mode to preserve HTTP error details (`message/type/code`) in failed request records.
 
 Install
 -------
@@ -56,6 +57,32 @@ benchmark-runner benchmark \
   --progress-url https://example.com/api/progress/123 \
   --progress-auth YOUR_TOKEN
 ```
+
+HTTP Error Details for Failed Requests
+--------------------------------------
+GuideLLM's default `openai_http` backend does not always preserve response-body
+error payloads in request-level benchmark errors. Benchmark Runner provides an
+opt-in backend type that enriches failed request errors using OpenAI-style error
+fields (`error.message`, `error.type`, `error.code`):
+
+```bash
+benchmark-runner benchmark run \
+  --target http://localhost:8000/v1 \
+  --backend openai_http_error_detail \
+  --profile constant \
+  --rate 10 \
+  --max-requests 100 \
+  --sample-requests 20 \
+  --data "prompt_tokens=128,output_tokens=256" \
+  --processor PROCESSOR_PATH
+```
+
+When a request fails, `requests.errored[*].info.error` in benchmark outputs will
+contain text similar to:
+`HTTP 400: ... (type=BadRequestError, code=400)`.
+
+Note: if `--sample-requests 0` is used, request-level samples are omitted by design,
+including failed request details.
 
 ShareGPT dataset support
 ------------------------
@@ -121,6 +148,24 @@ Install development dependencies:
 
 ```bash
 pip install -e ".[dev]"
+```
+
+macOS Notes
+-----------
+Benchmark Runner applies two macOS-only runtime defaults to avoid known
+multiprocessing hangs:
+- switch GuideLLM multiprocessing context from `fork` to `spawn` (unless
+  `GUIDELLM__MP_CONTEXT_TYPE` is explicitly set)
+- default `--data-num-workers` to `0` unless provided on the CLI
+
+References:
+- https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods
+- https://bugs.python.org/issue33725
+
+To disable these defaults for debugging/experiments:
+
+```bash
+BENCHMARK_RUNNER_DISABLE_MACOS_WORKAROUNDS=1 benchmark-runner benchmark run ...
 ```
 
 License
