@@ -25,6 +25,10 @@ from pathlib import Path
 import click
 from pydantic import ValidationError
 from benchmark_runner.chained_progress import ChainedBenchmarkerProgress
+from benchmark_runner.openai_http_error_detail_backend import (
+    ERROR_DETAIL_BACKEND_TYPE,
+    OpenAIHTTPErrorDetailBackend,
+)
 from guidellm.benchmark.entrypoints import benchmark_generative_text
 from benchmark_runner.progress import ServerBenchmarkerProgress
 from benchmark_runner.sharegpt_adapter import prepare_datasets
@@ -51,6 +55,11 @@ from guidellm.utils import cli as cli_tools
 """Available strategy and profile type choices for benchmark execution."""
 STRATEGY_PROFILE_CHOICES: list[str] = list(get_literal_vals(ProfileType | StrategyType))
 
+"""Available backend type choices for benchmark execution."""
+BACKEND_CHOICES: list[str] = [
+    *list(get_literal_vals(BackendType)),
+    ERROR_DETAIL_BACKEND_TYPE,
+]
 
 DISABLE_MACOS_WORKAROUNDS_ENV = "BENCHMARK_RUNNER_DISABLE_MACOS_WORKAROUNDS"
 """Set to 1/true/yes to disable runtime macOS defaults for process/data workers."""
@@ -167,9 +176,9 @@ def benchmark():
     "--backend",
     "--backend-type",  # legacy alias
     "backend",
-    type=click.Choice(list(get_literal_vals(BackendType))),
+    type=click.Choice(BACKEND_CHOICES),
     default=BenchmarkGenerativeTextArgs.get_default("backend"),
-    help=f"Backend type. Options: {', '.join(get_literal_vals(BackendType))}.",
+    help=f"Backend type. Options: {', '.join(BACKEND_CHOICES)}.",
 )
 @click.option(
     "--backend-kwargs",
@@ -429,6 +438,12 @@ def run(**kwargs):  # noqa: C901
     kwargs = cli_tools.set_if_not_default(click.get_current_context(), **kwargs)
     apply_macos_runtime_workarounds(kwargs)
 
+    use_error_detail_backend = kwargs.get("backend") == ERROR_DETAIL_BACKEND_TYPE
+    if use_error_detail_backend:
+        # Keep args validation compatible with GuideLLM's current BackendType literal.
+        # We swap in the custom backend instance after args are created.
+        kwargs["backend"] = BenchmarkGenerativeTextArgs.get_default("backend")
+
     # Handle remapping for request params
     request_type = kwargs.pop("request_type", None)
     request_formatter_kwargs = kwargs.pop("request_formatter_kwargs", None)
@@ -527,6 +542,15 @@ def run(**kwargs):  # noqa: C901
                             f"Unknown response handler: '{value}'. "
                             f"Available handlers: {available}"
                         )
+
+    if use_error_detail_backend:
+        backend_kwargs = args.backend_kwargs or {}
+        args.backend = OpenAIHTTPErrorDetailBackend(
+            target=args.target,
+            model=args.model or "",
+            **backend_kwargs,
+        )
+        args.backend_kwargs = None
 
     if uvloop is not None:
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())

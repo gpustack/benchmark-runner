@@ -3,3 +3,4 @@ __git_commit__ = 'HEAD'
 
 from . import custom_response_handler  # noqa: F401 # Register custom response handler
 from . import output_dual_json  # noqa: F401 # Register output format
+from . import openai_http_error_detail_backend  # noqa: F401 # Register custom backend
