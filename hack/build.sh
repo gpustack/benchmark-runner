@@ -21,8 +21,8 @@ function set_version() {
   local git_commit="${GIT_COMMIT:-HEAD}"
   local git_commit_short="${git_commit:0:7}"
 
-  benchmark_runner::log::infoinfo "setting version to $GIT_VERSION"
-  benchmark_runner::log::infoinfo "setting git commit to $git_commit_short"
+  benchmark_runner::log::info "setting version to $GIT_VERSION"
+  benchmark_runner::log::info "setting git commit to $git_commit_short"
 
   # Replace the __version__ variable in the __init__.py file
   benchmark_runner::util::sed "s/__version__ = .*/__version__ = '${GIT_VERSION}'/" "${version_file}"
@@ -42,9 +42,9 @@ function restore_version_file() {
 # main
 #
 
-benchmark_runner::log::infoinfo "+++ BUILD +++"
+benchmark_runner::log::info "+++ BUILD +++"
 prepare_dependencies
 set_version
 build
 restore_version_file
-benchmark_runner::log::infoinfo "--- BUILD ---"
+benchmark_runner::log::info "--- BUILD ---"

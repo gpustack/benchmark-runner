@@ -14,7 +14,7 @@ log_level="${LOG_LEVEL:-"debug"}"
 log_colorful="${LOG_COLORFUL:-"true"}"
 
 # Handler for when we exit automatically on an error.
-benchmark_runner::log::infoerrexit() {
+benchmark_runner::log::errexit() {
   local err="${PIPESTATUS[*]}"
 
   # if the shell we are in doesn't have errexit set (common in subshells) then
@@ -22,13 +22,13 @@ benchmark_runner::log::infoerrexit() {
   set +o | grep -qe "-o errexit" || return
 
   set +o xtrace
-  benchmark_runner::log::infopanic "${BASH_SOURCE[1]}:${BASH_LINENO[0]} '${BASH_COMMAND}' exited with status ${err}" "${1:-1}"
+  benchmark_runner::log::panic "${BASH_SOURCE[1]}:${BASH_LINENO[0]} '${BASH_COMMAND}' exited with status ${err}" "${1:-1}"
 }
 
-benchmark_runner::log::infoinstall_errexit() {
+benchmark_runner::log::install_errexit() {
   # trap ERR to provide an error handler whenever a command exits nonzero, this
   # is a more verbose version of set -o errexit
-  trap 'benchmark_runner::log::infoerrexit' ERR
+  trap 'benchmark_runner::log::errexit' ERR
 
   # setting errtrace allows our ERR trap handler to be propagated to functions,
   # expansions and subshells
@@ -36,7 +36,7 @@ benchmark_runner::log::infoinstall_errexit() {
 }
 
 # Debug level logging.
-benchmark_runner::log::infodebug() {
+benchmark_runner::log::debug() {
   [[ ${log_level} == "debug" ]] || return 0
   local message="${2:-}"
 
@@ -50,7 +50,7 @@ benchmark_runner::log::infodebug() {
 }
 
 # Info level logging.
-benchmark_runner::log::infoinfo() {
+benchmark_runner::log::info() {
   [[ ${log_level} == "debug" ]] || [[ ${log_level} == "info" ]] || return 0
   local message="${2:-}"
 
@@ -68,7 +68,7 @@ benchmark_runner::log::infoinfo() {
 }
 
 # Warn level logging.
-benchmark_runner::log::infowarn() {
+benchmark_runner::log::warn() {
   local message="${2:-}"
 
   local timestamp
@@ -85,7 +85,7 @@ benchmark_runner::log::infowarn() {
 }
 
 # Error level logging, log an error but keep going, don't dump the stack or exit.
-benchmark_runner::log::infoerror() {
+benchmark_runner::log::error() {
   local message="${2:-}"
 
   local timestamp
@@ -102,7 +102,7 @@ benchmark_runner::log::infoerror() {
 }
 
 # Fatal level logging, log an error but exit with 1, don't dump the stack or exit.
-benchmark_runner::log::infofatal() {
+benchmark_runner::log::fatal() {
   local message="${2:-}"
 
   local timestamp
@@ -125,7 +125,7 @@ benchmark_runner::log::infofatal() {
 #   $1 Message to log with the error
 #   $2 The error code to return
 #   $3 The number of stack frames to skip when printing.
-benchmark_runner::log::infopanic() {
+benchmark_runner::log::panic() {
   local message="${1:-}"
   local code="${2:-1}"
 

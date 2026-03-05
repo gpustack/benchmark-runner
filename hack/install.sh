@@ -27,6 +27,6 @@ function download_deps() {
 # main
 #
 
-benchmark_runner::log::infoinfo "+++ DEPENDENCIES +++"
+benchmark_runner::log::info "+++ DEPENDENCIES +++"
 download_deps
-benchmark_runner::log::infoinfo "--- DEPENDENCIES ---"
+benchmark_runner::log::info "--- DEPENDENCIES ---"

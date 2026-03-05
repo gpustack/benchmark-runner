@@ -16,12 +16,12 @@ PACKAGE_PUSH=${PACKAGE_PUSH:-false}
 
 function pack() {
     if ! command -v docker &>/dev/null; then
-        benchmark_runner::log::infofatal "Docker is not installed. Please install Docker to use this target."
+        benchmark_runner::log::fatal "Docker is not installed. Please install Docker to use this target."
         exit 1
     fi
 
     if ! docker buildx inspect --builder "gpustack" &>/dev/null; then
-        benchmark_runner::log::infoinfo "Creating new buildx builder 'gpustack'"
+        benchmark_runner::log::info "Creating new buildx builder 'gpustack'"
         docker run --rm --privileged tonistiigi/binfmt:qemu-v9.2.2-52 --uninstall qemu-*
         docker run --rm --privileged tonistiigi/binfmt:qemu-v9.2.2-52 --install all
         docker buildx create \
@@ -44,7 +44,7 @@ function pack() {
 	for label in "${LABELS[@]}"; do
 		EXTRA_ARGS+=("--label" "${label}")
 	done
-    benchmark_runner::log::infoinfo "Building '${TAG}' platform 'linux/${PACKAGE_ARCH}'"
+    benchmark_runner::log::info "Building '${TAG}' platform 'linux/${PACKAGE_ARCH}'"
     set -x
     docker buildx build \
         --pull \
@@ -63,6 +63,6 @@ function pack() {
     set +x
 }
 
-benchmark_runner::log::infoinfo "+++ PACKAGE +++"
+benchmark_runner::log::info "+++ PACKAGE +++"
 pack
-benchmark_runner::log::infoinfo "--- PACKAGE ---"
+benchmark_runner::log::info "--- PACKAGE ---"

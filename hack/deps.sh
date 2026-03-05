@@ -17,6 +17,6 @@ function deps() {
 # main
 #
 
-benchmark_runner::log::infoinfo "+++ DEPS +++"
+benchmark_runner::log::info "+++ DEPS +++"
 deps
-benchmark_runner::log::infoinfo "--- DEPS ---"
+benchmark_runner::log::info "--- DEPS ---"

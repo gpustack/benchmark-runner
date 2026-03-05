@@ -15,6 +15,6 @@ function test() {
 # main
 #
 
-benchmark_runner::log::infoinfo "+++ TEST +++"
+benchmark_runner::log::info "+++ TEST +++"
 test
-benchmark_runner::log::infoinfo "--- TEST ---"
+benchmark_runner::log::info "--- TEST ---"

@@ -18,6 +18,6 @@ function ci() {
 # main
 #
 
-benchmark_runner::log::infoinfo "+++ CI +++"
+benchmark_runner::log::info "+++ CI +++"
 ci "$@"
-benchmark_runner::log::infoinfo "--- CI ---"
+benchmark_runner::log::info "--- CI ---"
