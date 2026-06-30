@@ -23,7 +23,10 @@ keywords = [
     "guidellm"
 ]
 dependencies = [
-    "guidellm>=0.5.1",
+    # Upper-bounded: the runner forks guidellm 0.5.x internals
+    # (guidellm.backends.response_handlers, GenerationResponseHandlerFactory),
+    # which 0.6.0 restructured/removed. Bump intentionally after porting.
+    "guidellm>=0.5.1,<0.6",
     # Required by some models' tokenizers (e.g. Kimi-K2) for synthetic_text
     # dataset deserialization. Not pulled in transitively by guidellm. (#5689)
     "tiktoken",
