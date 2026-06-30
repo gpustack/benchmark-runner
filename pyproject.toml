@@ -24,6 +24,9 @@ keywords = [
 ]
 dependencies = [
     "guidellm>=0.5.1",
+    # Required by some models' tokenizers (e.g. Kimi-K2) for synthetic_text
+    # dataset deserialization. Not pulled in transitively by guidellm. (#5689)
+    "tiktoken",
 ]
 
 [dependency-groups]
