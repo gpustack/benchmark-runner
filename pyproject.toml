@@ -23,7 +23,7 @@ keywords = [
     "guidellm"
 ]
 dependencies = [
-    "guidellm==0.7.1",
+    "guidellm==0.7.3",
     # Required by some models' tokenizers (e.g. Kimi-K2) for synthetic_text
     # dataset deserialization. Not pulled in transitively by guidellm. (#5689)
     "tiktoken",

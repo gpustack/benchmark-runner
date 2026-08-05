@@ -7,7 +7,7 @@ This module implements a dual-output JSON handler that saves both:
 
 Both files are saved to the same directory with clear naming conventions.
 
-guidellm 0.7.1 note:
+guidellm 0.7.x note:
 - Output formatters are resolved by ``GenerativeBenchmarkerOutput.resolve(args)``
   which looks up the implementation by ``args.kind`` and calls its ``from_args``
   factory. So a custom output needs BOTH a ``BenchmarkOutputArgs`` subclass (the
@@ -66,7 +66,7 @@ class AutoMarshalJSONEncoder(json.JSONEncoder):
         # Handle class/type objects (like request handler classes)
         if isinstance(o, type):
             # Try to find the registered name for this handler class.
-            # guidellm 0.7.1: request handlers live in
+            # guidellm 0.7.x: request handlers live in
             # guidellm.backends.openai.request_handlers with OpenAIRequestHandlerFactory.
             from guidellm.backends.openai.request_handlers import (
                 OpenAIRequestHandlerFactory,
@@ -207,7 +207,7 @@ class GenerativeBenchmarkerDualJson(GenerativeBenchmarkerOutput):
 
         # Prepare data. Use mode="json" so pydantic serializes non-JSON-native
         # leaves (e.g. Path in the embedded scenario config, enums, datetimes) to
-        # JSON-compatible values; guidellm 0.7.1 embeds the BenchmarkScenario
+        # JSON-compatible values; guidellm 0.7.x embeds the BenchmarkScenario
         # (with Path output targets) in report.config.
         full_dict = report.model_dump(mode="json")
         summary_dict = report.model_dump(mode="json", exclude=self.EXCLUDE_FIELDS)

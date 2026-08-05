@@ -1,12 +1,12 @@
 """
 The core flow in this module is adapted from GuideLLM's OpenAI backend:
-- Source: guidellm v0.7.1, ``src/guidellm/backends/openai/http.py``
-  (https://github.com/vllm-project/guidellm/tree/v0.7.1)
+- Source: guidellm v0.7.3, ``src/guidellm/backends/openai/http.py``
+  (https://github.com/vllm-project/guidellm/tree/v0.7.3)
 - Reference implementation: `guidellm/backends/openai/http.py::OpenAIHTTPBackend`
 
 Adjustments in this module:
 1) Register a new backend type `openai_http_error_detail` (args + implementation).
-2) Keep the request/stream processing flow aligned with GuideLLM 0.7.1 (reuse the
+2) Keep the request/stream processing flow aligned with GuideLLM 0.7.3 (reuse the
    base `_prepare_resolve_request`, which formats the request, filters ``None`` via
    ``deep_filter`` and builds the httpx kwargs).
 3) For HTTP error responses, read the body early (`aread()`) before the stream
@@ -16,7 +16,7 @@ Adjustments in this module:
    ``response.raise_for_status()`` used by the stock backend.
 4) Support selecting a custom request handler (e.g. the reasoning-aware chat
    handler) via a ``request_handlers`` field keyed by API path -> registered
-   handler NAME. The stock ``OpenAIHTTPBackend`` in 0.7.1 does NOT surface handler
+   handler NAME. The stock ``OpenAIHTTPBackend`` in 0.7.3 does NOT surface handler
    overrides: ``_prepare_resolve_request`` calls
    ``OpenAIRequestHandlerFactory.create(request_format)`` with no override
    argument. Rather than fork that whole method, we let the base build its handler
@@ -27,13 +27,20 @@ Adjustments in this module:
    A handler that accumulated per-request state in ``format()`` would need the
    override applied BEFORE formatting instead.
 
-guidellm 0.7.1 vs 0.6.0:
+guidellm 0.7.x vs 0.6.0:
 - Backend config is stored on ``self._args`` (an ``OpenAIHTTPBackendArgs``), not as
   plain attributes. The request format lives at ``self._args.request_format`` (an
   API path like ``/v1/chat/completions``), and routes at ``self._args.api_routes``.
 - The handler lifecycle is ``format(...)`` -> ``add_streaming_line(line)`` ->
   ``compile_streaming(request, arguments)`` / ``compile_non_streaming(request,
   arguments, data)`` (``arguments`` is now a required positional arg on compile).
+
+guidellm 0.7.3 note:
+- The lifecycle gained a final ``post_validation(response)`` step, which the text
+  handlers use to reject a compiled response carrying no text, no tool calls and no
+  output tokens. Both resolve paths below call it in the same position as the stock
+  backend, so an empty payload lands in ``RequestInfo.error`` instead of being
+  counted as a successful request with zero output.
 
 Backend kwargs shape gpustack must send (spec.backend):
     {
@@ -206,7 +213,7 @@ class OpenAIHTTPErrorDetailBackendArgs(OpenAIHTTPBackendArgs):
     """Args for the error-detail backend.
 
     Extends the stock OpenAI HTTP backend args with a ``request_handlers`` mapping
-    (API path -> registered handler NAME) since 0.7.1's base args do not expose a
+    (API path -> registered handler NAME) since 0.7.3's base args do not expose a
     handler-override field.
     """
 
@@ -307,6 +314,7 @@ class OpenAIHTTPErrorDetailBackend(OpenAIHTTPBackend):
             )
         data = response.json()
         gen_response = request_handler.compile_non_streaming(request, arguments, data)
+        request_handler.post_validation(gen_response)
         yield gen_response, request_info
         self._check_tool_call_expectations(request, gen_response)
 
@@ -374,6 +382,7 @@ class OpenAIHTTPErrorDetailBackend(OpenAIHTTPBackend):
 
             request_info.timings.request_end = time.time()
             gen_response = request_handler.compile_streaming(request, arguments)
+            request_handler.post_validation(gen_response)
             self._check_tool_call_expectations(request, gen_response)
             yield gen_response, request_info
         except asyncio.CancelledError as err:

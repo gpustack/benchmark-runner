@@ -5,7 +5,7 @@ from . import custom_response_handler  # noqa: F401 # Register custom response h
 from . import output_dual_json  # noqa: F401 # Register output format
 from . import openai_http_error_detail_backend  # noqa: F401 # Register custom backend
 
-# guidellm 0.7.1: registering a new BackendArgs / BenchmarkOutputArgs subclass only
+# guidellm 0.7.x: registering a new BackendArgs / BenchmarkOutputArgs subclass only
 # rebuilds that base registry's own schema (register_decorator -> reload_schema),
 # NOT the parent models that embed them as fields. Reload BenchmarkArgs and
 # BenchmarkScenario so their polymorphic unions include our custom

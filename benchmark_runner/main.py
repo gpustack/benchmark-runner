@@ -1,5 +1,5 @@
 # The functions in this file are adapted from:
-# https://github.com/vllm-project/guidellm/blob/v0.7.1/src/guidellm/cli/run.py
+# https://github.com/vllm-project/guidellm/blob/v0.7.3/src/guidellm/cli/run.py
 # Modifications have been made to fit project requirements.
 
 """
@@ -11,7 +11,7 @@ Key customizations:
 - Adds the adaptive ramp auto-tune engine (--auto-tune, see benchmark_runner.auto_tune).
 - Removes unnecessary subcommands, focusing on core benchmark and config functionality.
 
-guidellm 0.7.1 notes:
+guidellm 0.7.x notes:
 - The benchmark is driven by ``BenchmarkScenario.create(spec=..., ...)`` +
   ``benchmark_generative_text(args=scenario, ...)``; the old flat
   ``BenchmarkGenerativeTextArgs`` was removed. The scenario spec is built from the
@@ -149,7 +149,7 @@ def _opt_default(name: str):
     return _OPTION_DEFAULTS.get(name)
 
 
-# guidellm 0.7.1's ``guidellm.utils.cli`` no longer ships ``parse_list_floats`` or
+# guidellm 0.7.x's ``guidellm.utils.cli`` no longer ships ``parse_list_floats`` or
 # ``parse_json`` (only parse_list / parse_kv_str / parse_overrides / Union /
 # set_if_not_default remain). We provide local click callbacks with the same
 # behavior the benchmark-runner options relied on.
@@ -745,13 +745,13 @@ def run(**kwargs):  # noqa: C901
     kwargs = cli_tools.set_if_not_default(click.get_current_context(), **kwargs)
     apply_macos_runtime_workarounds(kwargs)
 
-    # guidellm 0.7.1: target/model are backend concerns and are folded into the
+    # guidellm 0.7.x: target/model are backend concerns and are folded into the
     # scenario's ``spec.backend`` (see scenario_builder.build_scenario_args). We
     # gather any extra backend options from --backend-kwargs here, plus target and
     # model, and normalize the custom-handler override to the backend's
     # ``request_handlers`` field (keyed by API path -> registered handler NAME).
     #
-    # NOTE (0.7.1): the ``OpenAIRequestHandlerFactory`` registers handlers by API
+    # NOTE (0.7.x): the ``OpenAIRequestHandlerFactory`` registers handlers by API
     # PATH, and our ``openai_http_error_detail`` backend exposes a
     # ``request_handlers`` field (path -> handler name string) that it resolves to
     # classes at runtime. We therefore pass handler names as STRINGS and keep the
@@ -1141,7 +1141,7 @@ def run(**kwargs):  # noqa: C901
 def _normalize_request_handlers(backend_kwargs: dict) -> None:
     """Normalize a custom request-handler override to the backend's expected shape.
 
-    guidellm 0.7.1 registers request handlers on ``OpenAIRequestHandlerFactory`` by
+    guidellm 0.7.x registers request handlers on ``OpenAIRequestHandlerFactory`` by
     API PATH. Our ``openai_http_error_detail`` backend exposes a ``request_handlers``
     field keyed by API path -> registered handler NAME (a string) and resolves the
     names to classes itself. We therefore keep handler names as STRINGS here.

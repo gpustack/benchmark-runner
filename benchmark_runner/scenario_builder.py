@@ -1,5 +1,5 @@
 """
-Build a guidellm 0.7.1 ``BenchmarkScenario`` from benchmark-runner's flat CLI
+Build a guidellm 0.7.x ``BenchmarkScenario`` from benchmark-runner's flat CLI
 options.
 
 guidellm 0.7.1 replaced the flat ``BenchmarkGenerativeTextArgs`` with a nested
@@ -9,7 +9,7 @@ reused by the stages / auto-tune loops) onto that ``spec`` and calls
 ``BenchmarkScenario.create(spec=..., scenario=...)`` exactly like guidellm's own
 ``cli/run.py`` template.
 
-Reference: ``git show v0.7.1:src/guidellm/cli/run.py`` and
+Reference: ``git show v0.7.3:src/guidellm/cli/run.py`` and
 ``src/guidellm/benchmark/schemas/entrypoints.py`` (BenchmarkArgs field set).
 """
 
@@ -271,7 +271,7 @@ def build_scenario_args(kwargs: dict[str, Any]) -> BenchmarkScenario:  # noqa: C
 
     # ── Tokenizer / processor ───────────────────────────────────────────────
     processor = kwargs.pop("processor", None)
-    kwargs.pop("processor_args", None)  # no dedicated spec field in 0.7.1
+    kwargs.pop("processor_args", None)  # no dedicated spec field in 0.7.x
     tokenizer: dict[str, Any] = {"kind": "huggingface_auto"}
     if processor:
         tokenizer["model"] = processor
@@ -300,7 +300,7 @@ def build_scenario_args(kwargs: dict[str, Any]) -> BenchmarkScenario:  # noqa: C
     # ── Data loader (sample cap) ────────────────────────────────────────────
     if isinstance(data_samples, int) and data_samples > 0:
         spec["data_loader"] = {"kind": "pytorch", "samples": data_samples}
-    # These 0.6.0 knobs have no direct 0.7.1 spec field; accept + ignore.
+    # These 0.6.0 knobs have no direct 0.7.x spec field; accept + ignore.
     kwargs.pop("data_num_workers", None)
     kwargs.pop("dataloader_kwargs", None)
     kwargs.pop("data_sampler", None)

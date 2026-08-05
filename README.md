@@ -335,7 +335,7 @@ benchmark-runner benchmark \
 
 Reasoning Tokens Support
 -------------------------
-GuideLLM 0.7.1 already measures TTFT and ITL across the thinking phase on its own —
+GuideLLM 0.7.x already measures TTFT and ITL across the thinking phase on its own —
 its chat handler treats a `reasoning_content` delta as a token arrival, and TTFOT
 (`time_to_first_output_token_ms`) reports the first *content* token separately. You
 do not need a custom handler for the timings.
@@ -358,7 +358,7 @@ benchmark-runner benchmark run \
   --max-requests 100
 ```
 
-GuideLLM 0.7.1 registers request handlers by **API path**, so `request_handlers` is
+GuideLLM 0.7.x registers request handlers by **API path**, so `request_handlers` is
 keyed by path and its value is a registered handler *name* (a string the backend
 resolves to a class). A legacy `response_handlers` dict keyed by request type
 (`{"chat_completions": ...}`) is still accepted and translated, but the path-keyed

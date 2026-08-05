@@ -186,7 +186,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guidellm", specifier = "==0.7.1" },
+    { name = "guidellm", specifier = "==0.7.3" },
     { name = "tiktoken" },
 ]
 
@@ -310,14 +310,14 @@ wheels = [
 
 [[package]]
 name = "click"
-version = "8.3.1"
+version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/fa/656b739db8587d7b5dfa22e22ed02566950fbfbcdc20311993483657a5c0/click-8.3.1.tar.gz", hash = "sha256:12ff4785d337a1bb490bb7e9c2b1ee5da3112e94a8622f26a6c77f5d2fc6842a", size = 295065, upload-time = "2025-11-15T20:45:42.706Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/78/01c019cdb5d6498122777c1a43056ebb3ebfeef2076d9d026bfe15583b2b/click-8.3.1-py3-none-any.whl", hash = "sha256:981153a64e25f12d547d3426c367a4857371575ee7ad18df2a6183ab0545b2a6", size = 108274, upload-time = "2025-11-15T20:45:41.139Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl", hash = "sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76", size = 119243, upload-time = "2026-06-24T17:45:13.73Z" },
 ]
 
 [[package]]
@@ -562,7 +562,7 @@ wheels = [
 
 [[package]]
 name = "guidellm"
-version = "0.7.1"
+version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -590,9 +590,9 @@ dependencies = [
     { name = "uvloop" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/4e/4ea184176af73288930391bfdc65ae245d98202606bc09bd90f3c260f11f/guidellm-0.7.1.tar.gz", hash = "sha256:94aee3a9de579383a9fb930e831079ac2a6406be74e61721fb93737e4190c2b6", size = 285501, upload-time = "2026-07-02T20:10:36.236Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/f8/9dfba6b0392ef86ca8c6e518e8361274f65c26e4e3aa4f7e19992523c1f2/guidellm-0.7.3.tar.gz", hash = "sha256:49dd35421bffefcdd1a7ef44aa81f4c667d8b5a122b8eedd608d222b9f24aba2", size = 299868, upload-time = "2026-07-31T20:08:41.174Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/b0/11490453a71ca9f07197bc8eeb2b34206dc96ed19a32b601f08af5e041ac/guidellm-0.7.1-py3-none-any.whl", hash = "sha256:ab40c007105c66010565b5ce113a341ef7f668e5515964cdb70a574f5eb1201d", size = 345543, upload-time = "2026-07-02T20:10:33.923Z" },
+    { url = "https://files.pythonhosted.org/packages/70/fb/59cdef16283fbf6648136ba45884bf3d848553c92de8068863d7e46fd252/guidellm-0.7.3-py3-none-any.whl", hash = "sha256:51f29e025093c5eb9bffd3e2ec6096d8868859f9c86b391f88d4fcd166bd369f", size = 365332, upload-time = "2026-07-31T20:08:38.647Z" },
 ]
 
 [[package]]

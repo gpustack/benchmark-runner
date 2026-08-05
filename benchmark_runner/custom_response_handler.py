@@ -4,7 +4,7 @@ Chat-completions handler that counts a reasoning model's thinking as output text
 What this handler is for CHANGED at guidellm 0.7.1, so the old description ("fixes
 TTFT and ITL for reasoning models") no longer applies — see below.
 
-guidellm 0.7.1 note:
+guidellm 0.7.x note:
 - Handlers still live in ``guidellm.backends.openai.request_handlers`` and are
   registered on ``OpenAIRequestHandlerFactory``. The stock factory registers the
   built-in handlers by API PATH (e.g. ``/v1/chat/completions``); we register this
@@ -17,7 +17,7 @@ guidellm 0.7.1 note:
   TTFT came out as "request start -> first token AFTER all the thinking" and the
   ITL series began there too. That is what the original override fixed, and the
   mechanism was its RETURN VALUE (``updated = True``), not the text it appended.
-  0.7.1 does this upstream — the base sets ``updated`` on
+  0.7.x does this upstream — the base sets ``updated`` on
   ``delta.reasoning``/``delta.reasoning_content`` — and adds what 0.5.x had no
   concept of: reasoning kept separately (``reasoning_text``) and TTFOT, the first
   CONTENT token, as its own metric. The ITL denominator is likewise untouched by
@@ -70,13 +70,13 @@ class ChatCompletionsWithReasoningResponseHandler(ChatCompletionsRequestHandler)
     """
     Chat-completions handler that also counts reasoning as generated output text.
 
-    Key difference from the 0.7.1 base handler — exactly one:
+    Key difference from the 0.7.x base handler — exactly one:
     - A chunk's reasoning delta is appended to ``streaming_texts`` as well, so the
       response's ``text`` and the word/character metrics derived from it include
       the thinking. The base counts only post-thinking content, which is empty for
       a reasoning model whose ``output_tokens`` budget is spent thinking.
 
-    NOT this class's doing (all inherited, all already correct in 0.7.1): TTFT
+    NOT this class's doing (all inherited, all already correct in 0.7.x): TTFT
     firing on a reasoning delta, the ITL series and its ``output_tokens``
     denominator, the TTFOT content flag, tool-call deltas, and the separate
     ``reasoning_text``. See the module docstring for why the timing story moved
@@ -115,7 +115,7 @@ class ChatCompletionsWithReasoningResponseHandler(ChatCompletionsRequestHandler)
         """
         Process a single line from a chat completion streaming response.
 
-        Delegates to the 0.7.1 base handler and then ALSO counts this chunk's
+        Delegates to the 0.7.x base handler and then ALSO counts this chunk's
         reasoning delta as generated text, which is the one behavior this subclass
         exists for. Note what that does NOT buy: the base already returns 1 on a
         reasoning-only chunk, so TTFT and the ITL series already span the thinking
