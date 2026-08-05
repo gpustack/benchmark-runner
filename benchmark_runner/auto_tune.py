@@ -875,9 +875,18 @@ async def run_ramp(  # noqa: C901
     if cfg.target == "sla" and last_pass is not None and first_fail is not None:
         lo, hi = last_pass, first_fail
         stop_reason = STOP_CONVERGED
-        while hi - lo > 1 and _budget_ok(len(points)):
+        # The budget is consulted only AFTER a next point has been established, so
+        # it is blamed only when it actually prevented a measurement. Testing it in
+        # the loop predicate instead relabelled a search that had FINISHED as
+        # `budget_points` whenever the point count happened to land on the cap:
+        # `--max-points 6` and `--max-points 12` produced the same six points and
+        # the same boundary, yet reported "truncated, raise the cap" vs "converged".
+        while hi - lo > 1:
             mid = math.floor((lo + hi) / 2)
             if mid <= lo:
+                break  # nothing left on the integer grid -> converged
+            if (spent := _budget_reason(len(points))) is not None:
+                stop_reason = spent
                 break
             _prep_progress(len(points), _phase2_remaining(lo, hi))
             m = await _run_point(float(mid), len(points))
@@ -891,10 +900,6 @@ async def run_ramp(  # noqa: C901
             else:
                 hi = float(mid)
                 first_fail = hi
-        else:
-            # Predicate went false rather than a break: either the interval closed
-            # (converged, already set) or a budget cap cut the bisection short.
-            stop_reason = _budget_reason(len(points)) or stop_reason
 
     # ── Phase 2: peak-seeking unimodal search (saturation target only) ───────
     # The goal is the single knob that MAXIMISES throughput, not a dense curve.
@@ -928,7 +933,11 @@ async def run_ramp(  # noqa: C901
             return m.output_tps
 
         stop_reason = STOP_CONVERGED
-        while (c - a) > 1 and _budget_ok(len(points)):
+        # Budget checked after a next point is established — see the SLA bisection
+        # above for why the loop predicate is the wrong place for it. Here it matters
+        # twice over, because this search can also run out of INTEGER GRID while the
+        # bracket is still 2 wide, which is convergence and not a budget problem.
+        while (c - a) > 1:
             # Midpoint of each side; must be a fresh interior integer knob.
             xl = math.floor((a + b) / 2)
             xr = math.ceil((b + c) / 2)
@@ -941,7 +950,10 @@ async def run_ramp(  # noqa: C901
             elif right_ok:
                 use_left = False
             else:
-                break  # integer grid exhausted on both sides
+                break  # integer grid exhausted on both sides -> converged
+            if (spent := _budget_reason(len(points))) is not None:
+                stop_reason = spent
+                break
             x = float(xl if use_left else xr)
             fx = await _probe_point(x)
             if fx is None:
@@ -957,8 +969,6 @@ async def run_ramp(  # noqa: C901
                     a, b, fb = b, x, fx  # higher on the right -> peak in (b, c)
                 else:
                     c = x  # not higher -> peak in (a, x)
-        else:
-            stop_reason = _budget_reason(len(points)) or stop_reason
 
     # Converged: push progress to 100 once (server clamps monotonically), then
     # close the session. server_progress IS inside the per-point runs' progress

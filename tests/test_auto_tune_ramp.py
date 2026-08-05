@@ -1023,6 +1023,69 @@ class TestStopReasons:
         assert o.probe_bound == 240.0
         assert o.stopped_at is not None and o.stopped_at < o.probe_bound
 
+    def test_a_search_that_finished_on_its_last_allowed_point_still_converged(self):
+        """A completed Phase 2 must not be relabelled `budget_points`.
+
+        The budget used to be tested in the loop PREDICATE, and `and` short-circuits:
+        reaching the `else` with a closed bracket said nothing about the budget, yet
+        the budget was consulted anyway. Two runs of the same curve then produced the
+        same nine points, the same peak, and opposite verdicts — `budget_points`
+        ("truncated, raise the cap") whenever the point count happened to land
+        exactly on max_points, `converged` otherwise. Raising the cap changes
+        nothing, so the advice was not just imprecise but wrong.
+
+        The budget is now consulted only after a next point has been established, so
+        it is blamed only when it actually prevented a measurement.
+        """
+        curve = piecewise({8: 800, 12: 1300, 16: 1200, 32: 1150})
+        exact = run_outcome(
+            sat_cfg(lower_bound=8, upper_bound=1024, max_points=9),
+            make_run_point(curve),
+        )
+        roomy = run_outcome(
+            sat_cfg(lower_bound=8, upper_bound=1024, max_points=20),
+            make_run_point(curve),
+        )
+        # Same search, so it must read the same either way.
+        assert knobs(exact.points) == knobs(roomy.points)
+        assert peak_knob(exact.points) == peak_knob(roomy.points) == 12.0
+        assert exact.stop_reason == roomy.stop_reason == STOP_CONVERGED
+
+    def test_a_peak_search_the_budget_really_did_cut_short_says_so(self):
+        # The other side of the fix: a cap low enough to stop a point that WOULD
+        # have been measured must still report the budget.
+        curve = piecewise({8: 800, 12: 1300, 16: 1200, 32: 1150})
+        o = run_outcome(
+            sat_cfg(lower_bound=8, upper_bound=1024, max_points=5),
+            make_run_point(curve),
+        )
+        assert len(o.points) == 5
+        assert o.stop_reason == STOP_BUDGET_POINTS
+
+    def test_an_sla_bisection_that_closed_its_interval_reports_converged(self):
+        # Same bug, the other Phase 2. The bracket (11, 12) is reached either way;
+        # only the reported reason used to differ.
+        curve = piecewise({4: 100, 8: 200, 1024: 400})
+
+        def rp():
+            # Latency crosses the 200ms threshold between knob 11 and 12.
+            return make_run_point(
+                curve, latency_fn=lambda k: 100.0 if k <= 11 else 500.0
+            )
+
+        cfg = dict(
+            axis="concurrency",
+            lower_bound=4,
+            upper_bound=1024,
+            probe_saturation=False,
+            sla_avg_latency_ms=200.0,
+        )
+        exact = run_outcome(AutoTuneConfig(max_points=6, **cfg), rp())
+        roomy = run_outcome(AutoTuneConfig(max_points=12, **cfg), rp())
+        assert knobs(exact.points) == knobs(roomy.points)
+        assert exact.sla_bracket == roomy.sla_bracket == (11.0, 12.0)
+        assert exact.stop_reason == roomy.stop_reason == STOP_CONVERGED
+
     def test_the_outcome_serializes_to_the_documented_shape(self):
         o = run_outcome(
             sat_cfg(lower_bound=4, upper_bound=32),
