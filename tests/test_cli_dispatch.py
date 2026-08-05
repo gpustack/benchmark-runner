@@ -328,6 +328,49 @@ def test_ramp_outcome_is_written_beside_the_point_files(monkeypatch, tmp_path):
     assert "__p" not in path.name.replace("__ramp", "")
 
 
+class TestConsoleOutputRespectsTheFlag:
+    """``--disable-console`` says "Disable all outputs to the console".
+
+    The runner's own diagnostics used to be bare ``print``s, which no flag could
+    reach: a run asked to stay quiet still wrote ``[DEBUG] ...`` onto stdout,
+    interleaved with whatever was consuming it. They now go through the console.
+
+    Warnings are deliberately NOT suppressed — they go to stderr instead, because
+    gpustack drives this headless and only has the process' streams, so "the ramp
+    sidecar could not be written" must survive a display flag.
+    """
+
+    def _run_a_stage(self, monkeypatch, *extra):
+        def spy(local_kwargs):
+            return object()
+
+        async def noop(*a, **kw):
+            return None, None
+
+        monkeypatch.setattr(main, "build_scenario_args", spy)
+        monkeypatch.setattr(main, "benchmark_generative_text", noop)
+        result = CliRunner().invoke(
+            cli,
+            [
+                "benchmark",
+                "run",
+                "--stages",
+                '[{"rate": 2}]',
+                "--data",
+                "prompt_tokens=8,output_tokens=8",
+                *extra,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        return result.output
+
+    def test_the_stage_diagnostic_is_visible_by_default(self, monkeypatch):
+        assert "Stage run 0" in self._run_a_stage(monkeypatch)
+
+    def test_disable_console_silences_it(self, monkeypatch):
+        assert self._run_a_stage(monkeypatch, "--disable-console").strip() == ""
+
+
 def test_a_sidecar_that_cannot_be_written_does_not_fail_the_run(monkeypatch, tmp_path):
     # The points ARE the measurement; a diagnostic file must never take a run down.
     async def fake_run_ramp(cfg, **kwargs):

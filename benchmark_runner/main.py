@@ -28,7 +28,9 @@ import asyncio
 import json
 import os
 import platform
+import sys
 from pathlib import Path
+from typing import Callable
 
 import click
 from pydantic import ValidationError
@@ -62,7 +64,11 @@ RAMP_OUTCOME_SUFFIX = "__ramp.json"
 
 
 def _write_ramp_outcome(
-    output_dir: Path | None, output_base: str, outcome: RampOutcome
+    output_dir: Path | None,
+    output_base: str,
+    outcome: RampOutcome,
+    log: Callable[[str], None],
+    warn: Callable[[str], None],
 ) -> None:
     """Write ``{base}__ramp.json`` beside the point files.
 
@@ -70,6 +76,9 @@ def _write_ramp_outcome(
     diagnostic file could not be written. A missing sidecar reads as "no facts
     available", which every consumer has to handle anyway (runs from before this
     existed, and non-ramp modes, have none).
+
+    ``log``/``warn`` are injected rather than printed directly so this respects the
+    caller's console policy (see ``--disable-console``).
     """
     try:
         directory = Path(output_dir) if output_dir is not None else Path.cwd()
@@ -77,9 +86,9 @@ def _write_ramp_outcome(
         path.write_text(
             json.dumps(outcome.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
         )
-        print(f"[DEBUG] Wrote ramp outcome: {path}")
+        log(f"Wrote ramp outcome: {path}")
     except Exception as e:  # noqa: BLE001 - diagnostics must not break the run
-        print(f"[WARN] Could not write ramp outcome sidecar: {e}")
+        warn(f"Could not write ramp outcome sidecar: {e}")
 
 
 # guidellm 0.7.1 removed the ProfileType/StrategyType/BackendType Literal aliases
@@ -776,6 +785,27 @@ def run(**kwargs):  # noqa: C901
     )
     console = Console() if not disable_console else None
 
+    def _log(message: str) -> None:
+        """Runner-level diagnostics (which mode ran, what it wrote, why).
+
+        Routed through the console so ``--disable-console`` ("Disable all outputs to
+        the console") actually holds for these too. They used to be bare ``print``s,
+        which the flag could not reach — a run asked to stay quiet still emitted
+        ``[DEBUG] ...`` lines onto stdout, interleaved with whatever was consuming it.
+        """
+        if console is not None:
+            console.print_update(message, status="debug")
+
+    def _warn(message: str) -> None:
+        """A problem the operator has to see even with the console silenced.
+
+        stderr, not the console: the runner is driven headless by gpustack, which
+        only has the process' streams, and a warning that a diagnostic file could not
+        be written must not be swallowed by a display flag. stderr also keeps it out
+        of whatever is parsing stdout.
+        """
+        print(f"[WARN] {message}", file=sys.stderr)
+
     progress_url = kwargs.pop("progress_url", None)
     progress_auth = kwargs.pop("progress_auth", None)
     # Keep a reference so the multi-run loops (ramp / stages / input matrix) can
@@ -994,8 +1024,8 @@ def run(**kwargs):  # noqa: C901
                 tokenizer=str(kwargs.get("processor") or ""),
                 max_items=warm_items,
             )
-        print(
-            f"[DEBUG] Auto-tune ramp: axis={axis} target={cfg.target} "
+        _log(
+            f"Auto-tune ramp: axis={axis} target={cfg.target} "
             f"bounds=[{lower_bound},{upper_bound}] multiplier={cfg.resolved_multiplier} "
             f"min_requests={min_requests} max_points={max_points} "
             f"max_total_seconds={max_total_seconds} base={output_base}"
@@ -1022,9 +1052,9 @@ def run(**kwargs):  # noqa: C901
         # the unambiguous "still running / no ramp"), and the report files are
         # re-serialized through a schema on the consumer side, which silently drops
         # fields it does not declare.
-        _write_ramp_outcome(kwargs.get("output_dir"), output_base, outcome)
-        print(
-            f"[DEBUG] Auto-tune ramp finished: {len(points)} point(s) measured, "
+        _write_ramp_outcome(kwargs.get("output_dir"), output_base, outcome, _log, _warn)
+        _log(
+            f"Auto-tune ramp finished: {len(points)} point(s) measured, "
             f"bracket={outcome.bracket_reason} stop={outcome.stop_reason} "
             f"stopped_at={outcome.stopped_at}"
         )
@@ -1088,8 +1118,8 @@ def run(**kwargs):  # noqa: C901
                 local["outputs"] = tuple(
                     _suffix_output(o, f"stage{i}") for o in base_outputs
                 )
-            print(
-                f"[DEBUG] Stage run {i}: rate={stage['rate']} "
+            _log(
+                f"Stage run {i}: rate={stage['rate']} "
                 f"max_requests={local.get('max_requests')} "
                 f"max_seconds={local.get('max_seconds')}"
             )
