@@ -86,6 +86,43 @@ STOP_POINT_FAILED = "point_failed"  # a point produced no benchmark
 # tell "field absent" from "field not yet invented".
 RAMP_OUTCOME_VERSION = 1
 
+# ── Saturation probe sizing ───────────────────────────────────────────────────
+# The probe answers one question: roughly how many requests per second can this
+# server retire? Two knobs decide the answer's quality, doing different jobs.
+#
+# PROBE_SECONDS is the measurement WINDOW. Sizing by request count alone
+# (max_requests=50) does not bound time at all — the run ends when the batch
+# drains, so its duration is one request latency — and, worse, it makes the window
+# exactly one batch: measured 1.71s against a 1.65s mean latency, i.e. 1.04
+# turnovers. Every rate in that window then describes a burst rather than a rate
+# (the prompt-token rate came back 3.4x the true value, TTFT 6x the steady-state
+# value at the same concurrency).
+#
+# PROBE_MAX_CONCURRENCY decides WHERE ON THE CURVE we measure, which is what
+# actually determines whether the estimate is usable. It used to be implicit and
+# accidental: max_requests=50 caps in-flight at 50 whatever max_concurrency says,
+# so the probe measured ~48 in-flight while claiming an unbounded ceiling. Lifting
+# the request cap without pinning this would let in-flight climb to 512 — deep in
+# the overloaded branch, where the achieved rate DECLINES (measured on one server:
+# 30.1 rps at 53 in-flight, 25.5 at 221, 24.9 at 276). A stable measurement of the
+# overloaded rate is a WORSE input than a noisy one near the knee, because the cap
+# derived from it can sit below the real peak. So the accidental operating point is
+# kept — deliberately this time.
+PROBE_SECONDS = 10.0
+PROBE_MAX_CONCURRENCY = 64
+# Backstop, sized so that hitting it is harmless. What makes the measurement a rate
+# rather than a batch is TURNOVERS = requests / concurrency, not requests / time —
+# so 16x the concurrency is 16 turnovers however fast the server is. Derived rather
+# than a round literal, because the invariant is against PROBE_MAX_CONCURRENCY: a
+# fixed 5000 would silently stop meaning "16 turnovers" the moment that changes.
+#
+# It can only bind on a server retiring >100 rps (sub-0.64s latency at 64 in
+# flight), and there 16 turnovers arrive well inside the window anyway. Keeping it
+# this small also stays under the ShareGPT conversion cache, which is sized from
+# `upper_bound * multiplier` and can be under 1000 for a narrow range — a bigger
+# backstop would end the probe on `requests_exhausted` instead of on its window.
+PROBE_MAX_REQUESTS = PROBE_MAX_CONCURRENCY * 16
+
 # Floor on the per-point duration cap derived from the remaining budget. A point
 # handed ~0 seconds would be stopped before a single response landed and report no
 # metrics at all, which reads downstream as a failed point rather than a truncated
@@ -243,6 +280,21 @@ class RampOutcome:
     # Ceiling rps measured by the saturation probe (rate axis + saturation target),
     # None when no probe ran.
     probe_ceiling: Optional[float] = None
+    # What the probe's soft cap actually DID. `probe_ceiling` alone cannot say:
+    # three outcomes are indistinguishable downstream without these two.
+    #
+    #   relaxed > 0                      the probe read low; the cap gave way
+    #   relaxed == 0 && stopped_at == bound   the cap clamped the overshoot point
+    #                                         (its whole reason for existing)
+    #   relaxed == 0 && stopped_at < bound    the cap never bound anything
+    #
+    # Only the middle one earns the probe's cost, and "should --probe-saturation
+    # stay on for this deployment?" is answerable only by counting which of the
+    # three keeps happening. Re-deriving it downstream would mean reimplementing
+    # the cap formula, the Phase-1/2 split and the clamp rule — three things that
+    # would then have to stay in sync with this file forever.
+    probe_relaxed: int = 0
+    probe_bound: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable facts (the points travel in their own report files)."""
@@ -263,6 +315,8 @@ class RampOutcome:
                 list(self.sla_bracket) if self.sla_bracket is not None else None
             ),
             "probe_ceiling": self.probe_ceiling,
+            "probe_relaxed": self.probe_relaxed,
+            "probe_bound": self.probe_bound,
         }
 
 
@@ -531,6 +585,8 @@ async def run_ramp(  # noqa: C901
     # measurement the cap came from, so the ramp can tell whether it was wrong.
     saturation_bound: Optional[float] = None
     probe_ceiling: Optional[float] = None
+    # How many times the soft cap doubled because the server outran the probe.
+    probe_relaxed = 0
 
     def _bound() -> float:
         """Knob ceiling in force right now: the tighter of the user's hard
@@ -575,20 +631,20 @@ async def run_ramp(  # noqa: C901
     async def _default_probe() -> float:
         local = dict(base_kwargs)
         local["random_seed"] = cfg.random_seed_base
-        local["max_requests"] = max(cfg.min_requests, 50)
-        # The probe runs BEFORE the first point and is not counted as one, but it
-        # spends the same clock, so it takes the same cap. Its "~2s" is only true
-        # for a fast server: 50 requests of long-output generation against a slow
-        # one is minutes, and unbounded it would eat a budget the ramp then has to
-        # honor.
-        local["max_seconds"] = _remaining_seconds()
+        local["max_requests"] = PROBE_MAX_REQUESTS
+        # Two different jobs, so the smaller of the two wins: PROBE_SECONDS is the
+        # measurement window (long enough to be a rate rather than one batch), and
+        # the remaining budget is the safety cap — the probe runs BEFORE the first
+        # point and is not counted as one, but it spends the same clock, so it must
+        # not eat a budget the ramp then has to honor.
+        local["max_seconds"] = min(PROBE_SECONDS, _remaining_seconds())
         local["outputs"] = [f"{output_base}__satprobe.dual_json"]
         # Offer load as fast as the server accepts it, capped at
-        # DEFAULT_RATE_MAX_CONCURRENCY, and read back the achieved rps as the
-        # ceiling. The cap is REQUIRED by guidellm's ThroughputProfileArgs, not
+        # PROBE_MAX_CONCURRENCY, and read back the achieved rps as the ceiling.
+        # A concurrency cap is REQUIRED by guidellm's ThroughputProfileArgs, not
         # merely advisory — see the scenario builder.
         local["profile"] = "throughput"
-        local["max_concurrency"] = DEFAULT_RATE_MAX_CONCURRENCY
+        local["max_concurrency"] = PROBE_MAX_CONCURRENCY
         report, _ = await benchmark_generative_text(
             args=_build_args(local), progress=progress, console=console
         )
@@ -737,6 +793,7 @@ async def run_ramp(  # noqa: C901
                     saturation_bound = min(
                         float(cfg.upper_bound), saturation_bound * 2.0
                     )
+                    probe_relaxed += 1
                     bound = _bound()
                 else:
                     # Stop on the bound. No bracket when lower_bound itself is
@@ -888,6 +945,8 @@ async def run_ramp(  # noqa: C901
         # an edge ("breaks just above").
         sla_bracket=((last_pass, first_fail) if cfg.target == "sla" else None),
         probe_ceiling=probe_ceiling,
+        probe_relaxed=probe_relaxed,
+        probe_bound=saturation_bound,
     )
 
 

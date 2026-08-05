@@ -934,6 +934,49 @@ class TestStopReasons:
         assert o.points == []
         assert o.stopped_at is None
 
+    def test_a_cap_that_clamped_the_overshoot_is_distinguishable(self):
+        # The one outcome that earns the probe's cost: the cap bound the last
+        # Phase-1 point, and the server did NOT outrun the probe, so it held.
+        # Reported as relaxed=0 with stopped_at == probe_bound.
+        curve = piecewise({4: 400, 8: 800, 16: 1600, 32: 3200, 36: 2800})
+        o = run_outcome(
+            sat_cfg(axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True),
+            make_run_point(curve, achieved_fn=lambda k: min(k, 30.0)),
+            probe=make_probe(29.22),
+        )
+        assert o.probe_ceiling == 29.22
+        assert o.probe_bound == 36.0  # ceil(29.22 * 1.2)
+        assert o.probe_relaxed == 0
+        assert o.stopped_at == 36.0  # the cap clamped the doubling from 64
+
+    def test_a_cap_the_server_outran_is_reported_as_relaxed(self):
+        # The probe read low: the server keeps up past the cap, so the cap doubles.
+        # Without the count this is indistinguishable from the case above — same
+        # stop reason, same probe_ceiling, a curve that looks equally healthy.
+        curve = piecewise({4: 400, 8: 800, 16: 1600, 32: 3200, 64: 6400, 128: 6500})
+        o = run_outcome(
+            sat_cfg(axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True),
+            make_run_point(curve, achieved_fn=lambda k: k),
+            probe=make_probe(10.0),  # cap = 12, far below what the server sustains
+        )
+        assert o.probe_relaxed >= 1
+        assert o.probe_bound is not None and o.probe_bound > 12.0
+        assert o.stopped_at is not None and o.stopped_at > 12.0
+
+    def test_a_cap_that_never_bound_anything_is_also_visible(self):
+        # The probe read HIGH: throughput turned over well below the cap, so the
+        # cap never clamped anything — the probe was pure cost. Told apart from the
+        # clamping case by stopped_at < probe_bound.
+        curve = piecewise({4: 400, 8: 800, 16: 1600, 32: 1650})
+        o = run_outcome(
+            sat_cfg(axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True),
+            make_run_point(curve, achieved_fn=lambda k: min(k, 200.0)),
+            probe=make_probe(200.0),  # cap = 240, never reached
+        )
+        assert o.probe_relaxed == 0
+        assert o.probe_bound == 240.0
+        assert o.stopped_at is not None and o.stopped_at < o.probe_bound
+
     def test_the_outcome_serializes_to_the_documented_shape(self):
         o = run_outcome(
             sat_cfg(lower_bound=4, upper_bound=32),
@@ -956,6 +999,8 @@ class TestStopReasons:
             "max_total_seconds": 3600.0,
             "sla_bracket": None,
             "probe_ceiling": None,
+            "probe_relaxed": 0,
+            "probe_bound": None,
         }
         # The points travel in their own report files, never in the sidecar.
         assert "points" not in d
