@@ -821,14 +821,31 @@ def run(**kwargs):  # noqa: C901
     sla_p95_latency_ms = kwargs.pop("sla_p95_latency_ms", None)
     sla_p99_latency_ms = kwargs.pop("sla_p99_latency_ms", None)
 
-    # --auto-tune drives the load axis itself, so a user-supplied --profile or
-    # --stages would be silently ignored (the ramp branch wins the dispatch
-    # below). Reject the combination up front instead. set_if_not_default has
-    # already dropped --profile when left at its "sweep" default, so a present
-    # "profile" key means the user set it explicitly.
-    if auto_tune and (stages or kwargs.get("profile") is not None):
-        conflict = "--stages" if stages else "--profile"
-        raise click.UsageError(f"--auto-tune is mutually exclusive with {conflict}.")
+    # --auto-tune and --stages each drive the load axis themselves, so whichever
+    # loses the dispatch below would be SILENTLY IGNORED. All three modes are
+    # therefore mutually exclusive, as the README states:
+    #
+    #   * --auto-tune + --profile / --stages — the ramp branch wins.
+    #   * --stages + --profile — the stages branch overwrites profile with
+    #     constant/concurrent per --axis, so `--stages ... --profile throughput`
+    #     ran a constant-rate sweep and exited 0 while reporting nothing about it.
+    #
+    # set_if_not_default has already dropped --profile when left at its "sweep"
+    # default, so a present "profile" key means the user set it explicitly.
+    explicit_profile = kwargs.get("profile") is not None
+    selected = [
+        flag
+        for flag, chosen in (
+            ("--auto-tune", auto_tune),
+            ("--stages", bool(stages)),
+            ("--profile", explicit_profile),
+        )
+        if chosen
+    ]
+    if len(selected) > 1:
+        raise click.UsageError(
+            f"{selected[0]} is mutually exclusive with {', '.join(selected[1:])}."
+        )
 
     if auto_tune:
         # Range/budget sanity, at the CLI boundary. Unchecked, these do not fail —

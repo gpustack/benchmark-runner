@@ -32,6 +32,37 @@ def test_auto_tune_rejects_stages():
     assert "mutually exclusive" in result.output
 
 
+def test_stages_rejects_explicit_profile():
+    # The third pair, which used to slip through: the stages branch overwrites
+    # profile with constant/concurrent per --axis, so `--stages ... --profile
+    # throughput` exited 0 while running a constant-rate sweep and saying nothing
+    # about the profile it discarded. README documents all three as exclusive.
+    result = CliRunner().invoke(
+        cli,
+        ["benchmark", "run", "--stages", '[{"rate": 2}]', "--profile", "throughput"],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+    assert "--profile" in result.output
+
+
+def test_all_three_modes_at_once_is_rejected():
+    result = CliRunner().invoke(
+        cli,
+        [
+            "benchmark",
+            "run",
+            "--auto-tune",
+            "--stages",
+            '[{"rate": 2}]',
+            "--profile",
+            "throughput",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
 class TestAutoTuneRangeIsValidated:
     """A bad range/budget must fail at the CLI, not silently waste a benchmark.
 
