@@ -734,6 +734,44 @@ def test_probe_zero_ceiling_falls_back():
     assert knobs(pts)[0] == 1.0, "zero ceiling should fall back to lower_bound=1"
 
 
+class TestTheProbeDoesNotSpendThePointBudget:
+    """``max_points`` caps MEASURED points; the probe is not one of them.
+
+    The probe writes a ``__satprobe`` file the consumer's point glob never matches
+    and its result never enters an aggregate — the README already documents it as
+    "not counted as a measured point". Charging it to ``max_points`` anyway made
+    ``--max-points 1`` legal at the CLI and yet produce ZERO measured points: the
+    probe took the only slot and Phase 1's predicate was false on entry. That is
+    exactly the "no points, no bracket" outcome the up-front range validation
+    exists to prevent, reached through a value it accepts.
+
+    Its wall clock is still bounded — it runs after the ramp's start, so
+    ``_elapsed`` contains it, and its own run is capped by the remaining budget.
+    """
+
+    def _outcome(self, max_points):
+        return run_outcome(
+            sat_cfg(
+                axis="rate",
+                lower_bound=4,
+                upper_bound=1024,
+                max_points=max_points,
+                probe_saturation=True,
+            ),
+            make_run_point(piecewise({4: 400, 1024: 4000})),
+            probe=make_probe(50.0),
+        )
+
+    def test_a_one_point_budget_still_measures_that_point(self):
+        o = self._outcome(1)
+        assert knobs(o.points) == [4.0]
+        assert o.stopped_at == 4.0
+
+    def test_the_budget_is_spent_entirely_on_measured_points(self):
+        o = self._outcome(2)
+        assert len(o.points) == 2, "the probe must not take one of the two slots"
+
+
 # ── server progress reporting ────────────────────────────────────────────────
 class _RecordingProgress(ServerBenchmarkerProgress):
     """Real ``ServerBenchmarkerProgress`` math, no network.

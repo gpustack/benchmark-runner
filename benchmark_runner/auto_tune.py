@@ -198,6 +198,9 @@ class AutoTuneConfig:
     # "p99 == max" case and keeps the cheap stages honest; the report still flags
     # stages whose sample count cannot support the tail it is showing.
     min_requests: int = 100
+    # Cap on MEASURED points. The saturation probe is not one of them (it writes a
+    # "__satprobe" file the consumer's point glob never matches and never enters an
+    # aggregate), so it does not spend this budget — only wall clock.
     max_points: int = 12
     max_total_seconds: float = 3600.0  # 1h; kept in sync with the CLI default
     # SLA thresholds (all optional, all in ms, all "<=" comparisons).
@@ -491,10 +494,6 @@ async def run_ramp(  # noqa: C901
         writes ``{output_base}__p{index}.dual_json`` -> ``__p{index}.json`` + full.
     """
     start = time.monotonic()
-    # The saturation probe is a full measured run of its own, so it consumes one
-    # of max_points (and its wall-clock is already inside _elapsed, since it runs
-    # after `start`). 0 until the probe actually runs.
-    probe_points = 0
 
     def _elapsed() -> float:
         return time.monotonic() - start
@@ -505,8 +504,18 @@ async def run_ramp(  # noqa: C901
         The two caps are reported separately: a run cut short by the clock looks
         identical to one that stopped on its own to anybody counting points, and
         the fix differs (raise the duration cap vs. nothing to fix).
+
+        Only MEASURED points count. The saturation probe is a run of its own but
+        is not one of them — it is a sizing aid, it writes to a "__satprobe" file
+        the consumer's point glob never matches, and its result never enters an
+        aggregate. Charging it to max_points made `--max-points 1` legal at the
+        CLI yet produce ZERO measured points (the probe ate the only slot), i.e.
+        exactly the "no points, no bracket" outcome the up-front validation
+        exists to prevent. Its wall clock is still bounded: it runs after `start`,
+        so `_elapsed` already contains it, and its own run is capped by
+        `_remaining_seconds`.
         """
-        if points_done + probe_points >= cfg.max_points:
+        if points_done >= cfg.max_points:
             return STOP_BUDGET_POINTS
         if _elapsed() >= cfg.max_total_seconds:
             return STOP_BUDGET_SECONDS
@@ -712,7 +721,6 @@ async def run_ramp(  # noqa: C901
             server_progress.run_total = 1 + max(2, _phase1_remaining(knob))
         ceiling = await _probe()
         probe_slices = 1
-        probe_points = 1
         if ceiling and ceiling > 0:
             # Soft cap ~20% above the measured ceiling (the throughput peak sits
             # at/just below it). The ramp still starts at lower_bound.
