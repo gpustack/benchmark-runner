@@ -889,12 +889,12 @@ def run(**kwargs):  # noqa: C901
         #     false on entry, so the ramp returns zero points and no bracket.
         # Neither the gpustack API (both bounds are unconstrained Optional[float])
         # nor click's own types reject any of these, so this is the only gate.
-        for name, flag, value in (
-            ("lower_bound", "--lower-bound", lower_bound),
-            ("upper_bound", "--upper-bound", upper_bound),
-            ("min_requests", "--min-requests", min_requests),
-            ("max_points", "--max-points", max_points),
-            ("max_total_seconds", "--max-total-seconds", max_total_seconds),
+        for flag, value in (
+            ("--lower-bound", lower_bound),
+            ("--upper-bound", upper_bound),
+            ("--min-requests", min_requests),
+            ("--max-points", max_points),
+            ("--max-total-seconds", max_total_seconds),
         ):
             if value is not None and value <= 0:
                 raise click.BadParameter(

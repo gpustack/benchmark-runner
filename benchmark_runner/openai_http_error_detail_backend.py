@@ -1,6 +1,7 @@
 """
 The core flow in this module is adapted from GuideLLM's OpenAI backend:
-- Source: https://github.com/vllm-project/guidellm/blob/v0.7.1/src/guidellm/backends/openai/http.py
+- Source: guidellm v0.7.1, ``src/guidellm/backends/openai/http.py``
+  (https://github.com/vllm-project/guidellm/tree/v0.7.1)
 - Reference implementation: `guidellm/backends/openai/http.py::OpenAIHTTPBackend`
 
 Adjustments in this module:
