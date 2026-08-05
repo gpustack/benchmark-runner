@@ -16,7 +16,8 @@ What it adds
 - Optional server-side progress updates during benchmarks.
 - ShareGPT dataset conversion to GuideLLM-compatible JSONL.
 - A JSON summary output format for benchmark reports.
-- Custom response handler for accurate TTFT/ITL metrics with reasoning tokens (e.g., DeepSeek-R1).
+- Custom response handler that counts a reasoning model's thinking as output text
+  (e.g., DeepSeek-R1), so a response cut off mid-thought is not reported as empty.
 - Optional backend mode to preserve HTTP error details (`message/type/code`) in failed request records.
 
 Install
@@ -334,8 +335,18 @@ benchmark-runner benchmark \
 
 Reasoning Tokens Support
 -------------------------
-For models that output reasoning tokens (e.g., DeepSeek-R1, o1-preview), use the custom
-response handler to get accurate TTFT and ITL metrics:
+GuideLLM 0.7.1 already measures TTFT and ITL across the thinking phase on its own —
+its chat handler treats a `reasoning_content` delta as a token arrival, and TTFOT
+(`time_to_first_output_token_ms`) reports the first *content* token separately. You
+do not need a custom handler for the timings.
+
+What the custom handler adds is text accounting: it also counts reasoning as
+generated output, so `text` and the word/character metrics derived from it
+(`metrics.text.words` / `metrics.text.characters`) include the thinking. That
+matters because a reasoning model given a small `output_tokens` never reaches
+content at all — GuideLLM pins `max_completion_tokens=output_tokens` and
+`ignore_eos=true`, so the whole budget goes to thinking and the response is cut off
+mid-thought. Without the handler those runs report an empty output.
 
 ```bash
 benchmark-runner benchmark run \

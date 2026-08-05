@@ -8,11 +8,24 @@ things the base maintains — the TTFOT content flag, tool-call deltas, and the
 separate reasoning text — while the backend's TTFOT code read the very flag that
 was never set.
 
-What it is still supposed to do differently: count reasoning tokens as generated
-text, so the inter-token latency series spans them.
+What it still does differently is NARROWER than it once was, and the tests say so
+because the old claim invites deleting the class as redundant:
+
+* NOT timing. 0.5.x's base ignored ``delta.reasoning_content`` entirely, so a
+  reasoning-only chunk returned 0 and TTFT/ITL started after the thinking. 0.7.1
+  fixed that upstream, so TTFT and the ITL series span reasoning WITHOUT this
+  class — pinned by :func:`test_the_base_already_covers_reasoning_in_the_timings`.
+* Yes to text. Reasoning is also appended to ``streaming_texts``, so ``text`` and
+  the word/character metrics derived from it include the thinking. That is the
+  only remaining difference, and it is load-bearing: at a small ``output_tokens``
+  a reasoning model spends the whole budget thinking (guidellm forces
+  ``ignore_eos=True``), so the base's ``text`` is empty. Four real gpustack runs:
+  12 of 61136 successful requests ever emitted a content token.
 """
 
 import json
+
+from guidellm.backends.openai.request_handlers import ChatCompletionsRequestHandler
 
 from benchmark_runner.custom_response_handler import (
     ChatCompletionsWithReasoningResponseHandler,
@@ -56,8 +69,48 @@ class TestTtfotFlag:
         assert h.last_iteration_had_content is True
 
 
+def test_the_base_already_covers_reasoning_in_the_timings():
+    """TTFT/ITL are NOT this subclass's doing — the base returns 1 on reasoning.
+
+    The backend stamps ``first_token_iteration`` and advances
+    ``last_token_iteration`` / ``token_iterations`` from this return value, so a
+    non-zero result on a reasoning-only chunk IS the timing fix. It lives upstream
+    now; asserting it on the base is what keeps the subclass's docstring honest
+    (and stops the timing claim from being re-attached to this class).
+    """
+    base = ChatCompletionsRequestHandler()
+    assert base.add_streaming_line(sse(reasoning_content="thinking")) == 1
+
+    sub = ChatCompletionsWithReasoningResponseHandler()
+    assert sub.add_streaming_line(sse(reasoning_content="thinking")) == 1
+
+
 class TestReasoningIsCountedAsGeneratedText:
-    """The one behavior this subclass exists for."""
+    """The one behavior this subclass exists for: thinking counts as output text."""
+
+    def test_a_thinking_only_response_is_empty_without_this_subclass(self):
+        """The case that makes this class load-bearing rather than cosmetic.
+
+        A reasoning model given a small ``output_tokens`` never reaches content —
+        guidellm forces ``max_completion_tokens=output_tokens`` + ``ignore_eos``,
+        so the budget is spent thinking and the response is cut off mid-thought.
+        On real runs that is 99.98% of requests. The base then reports an empty
+        output; this subclass reports what the model actually generated.
+        """
+        chunks = [sse(reasoning_content="let "), sse(reasoning_content="me think")]
+
+        base = ChatCompletionsRequestHandler()
+        for c in chunks:
+            base.add_streaming_line(c)
+        assert base.streaming_texts == [], "base files reasoning only under reasoning"
+
+        sub = ChatCompletionsWithReasoningResponseHandler()
+        for c in chunks:
+            sub.add_streaming_line(c)
+        assert "".join(sub.streaming_texts) == "let me think"
+        # No content ever arrived, so TTFOT is legitimately unmeasurable here --
+        # the backend has nothing to stamp it from.
+        assert sub.last_iteration_had_content is False
 
     def test_reasoning_lands_in_the_text_stream(self):
         h = ChatCompletionsWithReasoningResponseHandler()
