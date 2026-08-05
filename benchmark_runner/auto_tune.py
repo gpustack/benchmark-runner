@@ -173,7 +173,17 @@ class AutoTuneConfig:
     lower_bound: float = 4.0
     upper_bound: float = 1024.0
     multiplier: Optional[float] = None  # default resolved by axis (10 conc / 30 rate)
-    min_requests: int = 30
+    # Per-point request floor. 100 rather than 30 because a percentile is only as
+    # good as the samples above it: with n samples, p99 has n/100 above it, so at
+    # n=30 (or 40) p99 IS the maximum — one outlier defines the tail. On the
+    # concurrency axis `knob * 10` puts every knob under 10 in that regime, which is
+    # exactly where a p95/p99 SLA threshold can end a run on its first point.
+    #
+    # 100 does not make p99 trustworthy (it makes it the second-largest sample —
+    # ~1000 is needed for a real tail estimate). It removes the degenerate
+    # "p99 == max" case and keeps the cheap stages honest; the report still flags
+    # stages whose sample count cannot support the tail it is showing.
+    min_requests: int = 100
     max_points: int = 12
     max_total_seconds: float = 3600.0  # 1h; kept in sync with the CLI default
     # SLA thresholds (all optional, all in ms, all "<=" comparisons).

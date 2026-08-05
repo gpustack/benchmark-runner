@@ -342,8 +342,9 @@ def benchmark():
     "--min-requests",
     "min_requests",
     type=int,
-    default=30,
-    help="Auto-tune per-point minimum request count (measurement-window floor).",
+    default=100,
+    help="Auto-tune per-point minimum request count (measurement-window floor). "
+    "100 keeps p99 off the maximum: with n samples only n/100 sit above p99.",
 )
 @click.option(
     "--max-points",
@@ -805,7 +806,7 @@ def run(**kwargs):  # noqa: C901
     lower_bound = kwargs.pop("lower_bound", 4.0)
     upper_bound = kwargs.pop("upper_bound", 1024.0)
     multiplier = kwargs.pop("multiplier", None)
-    min_requests = kwargs.pop("min_requests", 30)
+    min_requests = kwargs.pop("min_requests", 100)
     max_points = kwargs.pop("max_points", 12)
     max_total_seconds = kwargs.pop("max_total_seconds", 3600.0)
     # SLA thresholds: up to 9 optional "<=" latency targets (avg + p95 + p99 of

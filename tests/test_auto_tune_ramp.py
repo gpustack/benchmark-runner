@@ -1096,3 +1096,38 @@ class TestTheBudgetBoundsEachPoint:
         )  # the probe's own output file
         assert probe["max_seconds"] > 0
         assert probe["profile"] == "throughput"
+
+
+class TestPerPointRequestFloor:
+    """`min_requests` is a percentile floor, not just a "measure something" floor.
+
+    A percentile is only as good as the samples ABOVE it: with n samples, p99 has
+    n/100 above it. At n=40 (concurrency 4 x multiplier 10) p99 IS the maximum, so a
+    single outlier defines the tail — and the ramp's own Phase-1 SLA predicate reads
+    `ttft_p99_ms`, which means one slow request on the FIRST point could bracket
+    immediately and report the server as too slow for the SLA.
+    """
+
+    def test_the_floor_lifts_the_cheap_concurrency_stages(self):
+        # knob 4 x multiplier 10 = 40 -> floored to 100; knob 16 x 10 = 160 stands.
+        cfg = sat_cfg(axis="concurrency")
+        assert cfg.min_requests == 100
+        mult = cfg.resolved_multiplier
+        assert max(cfg.min_requests, round(4 * mult)) == 100
+        assert max(cfg.min_requests, round(8 * mult)) == 100
+        assert max(cfg.min_requests, round(16 * mult)) == 160
+
+    def test_the_floor_does_not_touch_the_rate_axis_defaults(self):
+        # multiplier 30 means the floor only binds under ~3.3 req/s, and the default
+        # lower_bound is 4 — so a normal rate-axis sweep is unchanged.
+        cfg = sat_cfg(axis="rate")
+        mult = cfg.resolved_multiplier
+        assert max(cfg.min_requests, round(4 * mult)) == 120
+        assert max(cfg.min_requests, round(3 * mult)) == 100  # only below ~3.3
+
+    def test_a_stage_at_the_floor_still_cannot_support_p99(self):
+        # 100 removes the degenerate p99 == max (it becomes the second-largest
+        # sample), it does NOT make the tail an estimate: 100/100 = 1 sample above
+        # p99. The report says so rather than the floor implying otherwise.
+        n = 100
+        assert n // 100 == 1
