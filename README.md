@@ -139,6 +139,10 @@ throughput curve the peak is read off. `--no-seed-increment` pins one seed for e
 point instead. (Manual `--stages` deliberately does the opposite by default — see
 "Manual stages" below.)
 
+The point files are dual-JSON pairs derived from the base id of the **first**
+`--outputs` entry, so auto-tune cannot honor additional output kinds; passing more
+than one logs which entries it ignored rather than quietly emitting only the first.
+
 **Why the search stopped** — the ramp also writes `{base}__ramp.json`:
 
 ```json

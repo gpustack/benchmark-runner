@@ -386,3 +386,55 @@ def test_a_sidecar_that_cannot_be_written_does_not_fail_the_run(monkeypatch, tmp
     )
     assert result.exit_code == 0, result.output
     assert "Could not write ramp outcome" in result.output
+
+
+def test_dropped_outputs_are_reported_in_auto_tune(monkeypatch, tmp_path):
+    # The ramp derives one dual_json pair per point from the FIRST output's base id,
+    # so further --outputs entries cannot be honored. Silently emitting only
+    # dual_json for `--outputs 42.dual_json,report.html` reads as a broken html
+    # writer; the run says what it ignored instead.
+    async def fake_run_ramp(cfg, **kwargs):
+        return _fake_outcome(cfg)
+
+    monkeypatch.setattr(main, "run_ramp", fake_run_ramp)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "benchmark",
+            "run",
+            "--auto-tune",
+            "--output-dir",
+            str(tmp_path),
+            "--outputs",
+            "42.dual_json,report.html",
+            # The warning must survive a silenced console: it is a real problem, and
+            # it is routed to stderr rather than through the console for that reason.
+            "--disable-console",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "ignoring the remaining --outputs" in result.output
+    assert "report.html" in result.output
+    # The point files still come from the first entry.
+    assert (tmp_path / "42__ramp.json").exists()
+
+
+def test_a_single_output_does_not_warn(monkeypatch, tmp_path):
+    async def fake_run_ramp(cfg, **kwargs):
+        return _fake_outcome(cfg)
+
+    monkeypatch.setattr(main, "run_ramp", fake_run_ramp)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "benchmark",
+            "run",
+            "--auto-tune",
+            "--output-dir",
+            str(tmp_path),
+            "--outputs",
+            "42.dual_json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "ignoring the remaining --outputs" not in result.output

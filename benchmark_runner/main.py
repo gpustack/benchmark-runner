@@ -997,6 +997,16 @@ def run(**kwargs):  # noqa: C901
             probe_saturation=kwargs.get("probe_saturation", True),
         )
         base_outputs = list(kwargs.get("outputs") or ["benchmarks.dual_json"])
+        # The ramp derives ONE dual_json pair per point from the first output's base
+        # id ({base}__p{index}), so any further --outputs entry cannot be honored.
+        # Say so: silently emitting only dual_json for a run that asked for
+        # `--outputs json,html` looks like the html writer is broken.
+        if len(base_outputs) > 1:
+            _warn(
+                f"--auto-tune writes one dual_json pair per measured point, "
+                f"derived from '{base_outputs[0]}'; ignoring the remaining "
+                f"--outputs entries: {', '.join(base_outputs[1:])}."
+            )
         output_base = _output_base(base_outputs[0])
         # Per-point kwargs share everything except profile/rate/seed/outputs/
         # max_requests, which the ramp engine sets for each run.
