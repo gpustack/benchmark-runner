@@ -145,9 +145,23 @@ class PointMetrics:
     ttft_ms: float  # metrics.time_to_first_token_ms.successful.mean
     ttft_p95_ms: float  # ...time_to_first_token_ms.successful.percentiles.p95
     ttft_p99_ms: float  # ...time_to_first_token_ms.successful.percentiles.p99
-    tpot_ms: float  # metrics.time_per_output_token_ms.successful.mean
-    tpot_p95_ms: float  # ...time_per_output_token_ms.successful.percentiles.p95
-    tpot_p99_ms: float  # ...time_per_output_token_ms.successful.percentiles.p99
+    # TPOT = DECODE-ONLY time per output token, which guidellm files under
+    # `inter_token_latency_ms`: (last_token - first_token) / (output_tokens - 1).
+    # That is the industry's TPOT (vLLM, genai-perf) and what the server's
+    # SLA_THRESHOLDS evaluates, so the bracketing here and the stored verdict
+    # agree. guidellm's `time_per_output_token_ms` divides by output_tokens from
+    # request_start instead, folding TTFT into the decode average — it used to
+    # feed these three fields, which made a TPOT threshold tighten with queueing
+    # (the error is TTFT / (n * TPOT): ~5% at 128 output tokens, ~40% at 16).
+    #
+    # It remains the FALLBACK, because the decode-only reading needs two token
+    # timestamps: a response delivered as one chunk (whole output at once, common
+    # at low load) has first_iteration == last_iteration and guidellm reports 0.
+    # Falling back keeps the threshold evaluable there; 0 would clear every budget
+    # and failing outright would bracket the ramp on its first point.
+    tpot_ms: float  # metrics.inter_token_latency_ms.successful.mean
+    tpot_p95_ms: float  # ...inter_token_latency_ms.successful.percentiles.p95
+    tpot_p99_ms: float  # ...inter_token_latency_ms.successful.percentiles.p99
     latency_ms: float  # metrics.request_latency.successful.mean * 1000 (s -> ms)
     latency_p95_ms: float  # ...request_latency.successful.percentiles.p95 * 1000
     latency_p99_ms: float  # ...request_latency.successful.percentiles.p99 * 1000
@@ -362,12 +376,20 @@ def _normalize(benchmark: Any, knob: float, index: int) -> PointMetrics:
         ttft_p99_ms=_mean(
             m, "time_to_first_token_ms", "successful", "percentiles", "p99"
         ),
-        tpot_ms=_mean(m, "time_per_output_token_ms", "successful", "mean"),
-        tpot_p95_ms=_mean(
-            m, "time_per_output_token_ms", "successful", "percentiles", "p95"
+        # Decode-only, i.e. the industry TPOT — see PointMetrics.tpot_ms. `or`
+        # takes the includes-TTFT reading when the decode-only one is 0, which is
+        # what a non-incrementally streamed response leaves behind.
+        tpot_ms=(
+            _mean(m, "inter_token_latency_ms", "successful", "mean")
+            or _mean(m, "time_per_output_token_ms", "successful", "mean")
         ),
-        tpot_p99_ms=_mean(
-            m, "time_per_output_token_ms", "successful", "percentiles", "p99"
+        tpot_p95_ms=(
+            _mean(m, "inter_token_latency_ms", "successful", "percentiles", "p95")
+            or _mean(m, "time_per_output_token_ms", "successful", "percentiles", "p95")
+        ),
+        tpot_p99_ms=(
+            _mean(m, "inter_token_latency_ms", "successful", "percentiles", "p99")
+            or _mean(m, "time_per_output_token_ms", "successful", "percentiles", "p99")
         ),
         # request_latency is seconds -> convert to ms to match the SLA thresholds.
         latency_ms=_mean(m, "request_latency", "successful", "mean") * 1000.0,
@@ -389,7 +411,15 @@ def _passes_sla(m: PointMetrics, cfg: AutoTuneConfig) -> bool:
     if m.success < SUCCESS_FLOOR:
         return False
     for threshold, value in cfg.sla_pairs(m):
-        if threshold is not None and value > threshold:
+        if threshold is None:
+            continue
+        # A non-positive value means the metric was not measured, not that it took
+        # 0 ms: `_normalize` returns 0.0 for anything missing from the report, and
+        # the decode-only TPOT is genuinely undefined when requests emit a single
+        # token (no second token to time), which guidellm reports as 0.0. Waiving
+        # the threshold there would let a max_tokens=1 run pass every point and
+        # ramp to the upper bound. Failing instead surfaces it as sla_never_met.
+        if value <= 0 or value > threshold:
             return False
     return True
 

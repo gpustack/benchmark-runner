@@ -25,6 +25,8 @@ import pytest
 from benchmark_runner.auto_tune import (
     AutoTuneConfig,
     PointMetrics,
+    _normalize,
+    _passes_sla,
     STOP_BUDGET_POINTS,
     STOP_BUDGET_SECONDS,
     STOP_CAPACITY_PLATEAU,
@@ -940,7 +942,9 @@ class TestStopReasons:
         # Reported as relaxed=0 with stopped_at == probe_bound.
         curve = piecewise({4: 400, 8: 800, 16: 1600, 32: 3200, 36: 2800})
         o = run_outcome(
-            sat_cfg(axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True),
+            sat_cfg(
+                axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True
+            ),
             make_run_point(curve, achieved_fn=lambda k: min(k, 30.0)),
             probe=make_probe(29.22),
         )
@@ -955,7 +959,9 @@ class TestStopReasons:
         # stop reason, same probe_ceiling, a curve that looks equally healthy.
         curve = piecewise({4: 400, 8: 800, 16: 1600, 32: 3200, 64: 6400, 128: 6500})
         o = run_outcome(
-            sat_cfg(axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True),
+            sat_cfg(
+                axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True
+            ),
             make_run_point(curve, achieved_fn=lambda k: k),
             probe=make_probe(10.0),  # cap = 12, far below what the server sustains
         )
@@ -969,7 +975,9 @@ class TestStopReasons:
         # clamping case by stopped_at < probe_bound.
         curve = piecewise({4: 400, 8: 800, 16: 1600, 32: 1650})
         o = run_outcome(
-            sat_cfg(axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True),
+            sat_cfg(
+                axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True
+            ),
             make_run_point(curve, achieved_fn=lambda k: min(k, 200.0)),
             probe=make_probe(200.0),  # cap = 240, never reached
         )
@@ -1131,3 +1139,74 @@ class TestPerPointRequestFloor:
         # p99. The report says so rather than the floor implying otherwise.
         n = 100
         assert n // 100 == 1
+
+
+class TestTpotIsDecodeOnly:
+    """The SLA's TPOT is the decode-only per-token time, not guidellm's name for it.
+
+    guidellm reports two per-output-token latencies and its naming is the reverse
+    of the industry's: `inter_token_latency_ms` is (last_token - first_token) /
+    (tokens - 1), i.e. what vLLM and genai-perf call TPOT, while
+    `time_per_output_token_ms` starts the clock at request_start and therefore
+    folds TTFT into the decode average. The ramp used to bracket on the second
+    one, so a TPOT threshold tightened as the queue grew — the error is
+    TTFT / (n * TPOT), ~5% at 128 output tokens and ~40% at 16.
+    """
+
+    @staticmethod
+    def _report(*, itl: float, tpot_incl_ttft: float):
+        """A guidellm ``benchmarks[0]`` stub carrying both per-token metrics."""
+
+        def dist(mean):
+            return SimpleNamespace(
+                successful=SimpleNamespace(
+                    mean=mean,
+                    max=mean,
+                    percentiles=SimpleNamespace(p95=mean, p99=mean),
+                )
+            )
+
+        return SimpleNamespace(
+            metrics=SimpleNamespace(
+                request_totals=SimpleNamespace(total=100, successful=100),
+                output_tokens_per_second=dist(500.0),
+                time_to_first_token_ms=dist(200.0),
+                inter_token_latency_ms=dist(itl),
+                time_per_output_token_ms=dist(tpot_incl_ttft),
+                request_latency=dist(1.5),
+                requests_per_second=dist(4.0),
+            )
+        )
+
+    def test_normalize_reads_the_decode_only_metric(self):
+        m = _normalize(self._report(itl=4.5, tpot_incl_ttft=6.1), knob=4.0, index=0)
+        assert (m.tpot_ms, m.tpot_p95_ms, m.tpot_p99_ms) == (4.5, 4.5, 4.5)
+
+    def test_a_threshold_between_the_two_bases_now_passes(self):
+        # The gap is what a queueing-inflated basis costs: TPOT 4.5 ms is inside a
+        # 5 ms budget, the includes-TTFT reading of 6.1 ms is not, and it was the
+        # one deciding capacity.
+        m = _normalize(self._report(itl=4.5, tpot_incl_ttft=6.1), knob=4.0, index=0)
+        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=5.0)) is True
+
+    def test_a_non_incremental_response_falls_back_instead_of_failing(self):
+        # A server that answers in ONE chunk (whole output at once, common at low
+        # load) leaves first_iteration == last_iteration, so guidellm reports the
+        # decode-only metric as 0.0. There is no gap between tokens to measure, and
+        # total-time-over-tokens is the only per-token number left — judge on it.
+        # Failing here would bracket the ramp on its first point for every server
+        # that batches its stream.
+        m = _normalize(self._report(itl=0.0, tpot_incl_ttft=4.7), knob=4.0, index=0)
+        assert m.tpot_ms == 4.7
+        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=5.0)) is True
+        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=4.0)) is False
+
+    def test_neither_basis_measured_still_fails_closed(self):
+        m = _normalize(self._report(itl=0.0, tpot_incl_ttft=0.0), knob=4.0, index=0)
+        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=5.0)) is False
+
+    def test_an_unset_threshold_is_still_ignored(self):
+        # The fail-closed rule applies to SET thresholds only: a zero-valued metric
+        # nobody asked about must not fail the point.
+        m = _normalize(self._report(itl=0.0, tpot_incl_ttft=0.0), knob=4.0, index=0)
+        assert _passes_sla(m, sla_cfg(sla_avg_ttft_ms=500.0)) is True
