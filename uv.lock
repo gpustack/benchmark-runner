@@ -186,7 +186,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "guidellm", specifier = ">=0.5.1,<0.6" },
+    { name = "guidellm", specifier = "==0.7.3" },
     { name = "tiktoken" },
 ]
 
@@ -310,14 +310,14 @@ wheels = [
 
 [[package]]
 name = "click"
-version = "8.3.1"
+version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/fa/656b739db8587d7b5dfa22e22ed02566950fbfbcdc20311993483657a5c0/click-8.3.1.tar.gz", hash = "sha256:12ff4785d337a1bb490bb7e9c2b1ee5da3112e94a8622f26a6c77f5d2fc6842a", size = 295065, upload-time = "2025-11-15T20:45:42.706Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/d4/81420972a676e8ffea40450d8c8c92943e7218a78fe9b64359836cc9876b/click-8.4.2.tar.gz", hash = "sha256:9a6cea6e60b17ebe0a44c5cc636d94f09bd66142c1cd7d8b4cd731c4917a15f6", size = 338000, upload-time = "2026-06-24T17:45:15.148Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/78/01c019cdb5d6498122777c1a43056ebb3ebfeef2076d9d026bfe15583b2b/click-8.3.1-py3-none-any.whl", hash = "sha256:981153a64e25f12d547d3426c367a4857371575ee7ad18df2a6183ab0545b2a6", size = 108274, upload-time = "2025-11-15T20:45:41.139Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/e2/79c688af8b210d232694e31e59da9f6ec747bae31c3f5946e4e9b98860d5/click-8.4.2-py3-none-any.whl", hash = "sha256:e6f9f66136c816745b9d65817da91d61d957fb16e02e4dcd0552553c5a197b76", size = 119243, upload-time = "2026-06-24T17:45:13.73Z" },
 ]
 
 [[package]]
@@ -562,7 +562,7 @@ wheels = [
 
 [[package]]
 name = "guidellm"
-version = "0.5.3"
+version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -573,6 +573,7 @@ dependencies = [
     { name = "ftfy" },
     { name = "httpx", extra = ["http2"] },
     { name = "loguru" },
+    { name = "more-itertools" },
     { name = "msgpack" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -585,11 +586,13 @@ dependencies = [
     { name = "tabulate" },
     { name = "torch" },
     { name = "transformers" },
+    { name = "typing-extensions" },
     { name = "uvloop" },
+    { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/62/e4/55caa45ad29cf02bb006e1d83b7ae8be110a515b93030e180226b874d22c/guidellm-0.5.3.tar.gz", hash = "sha256:f58d6d46ad8d7df924ffafb410997d3f2763fbf7a6fc9f7a6b3f4c0a892b8132", size = 213008, upload-time = "2026-01-23T18:44:43.132Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/f8/9dfba6b0392ef86ca8c6e518e8361274f65c26e4e3aa4f7e19992523c1f2/guidellm-0.7.3.tar.gz", hash = "sha256:49dd35421bffefcdd1a7ef44aa81f4c667d8b5a122b8eedd608d222b9f24aba2", size = 299868, upload-time = "2026-07-31T20:08:41.174Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/91/51e16c17e7821f55f43ca2758be05e6df2b897a47054215d608c5c20cbce/guidellm-0.5.3-py3-none-any.whl", hash = "sha256:ca84b9c433de0c8bb8427e818ccf45332a4bb7f2018308ebb3aebd595615357a", size = 248011, upload-time = "2026-01-23T18:44:40.615Z" },
+    { url = "https://files.pythonhosted.org/packages/70/fb/59cdef16283fbf6648136ba45884bf3d848553c92de8068863d7e46fd252/guidellm-0.7.3-py3-none-any.whl", hash = "sha256:51f29e025093c5eb9bffd3e2ec6096d8868859f9c86b391f88d4fcd166bd369f", size = 365332, upload-time = "2026-07-31T20:08:38.647Z" },
 ]
 
 [[package]]
@@ -860,6 +863,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "more-itertools"
+version = "11.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/1d/f4da6f02cdffe04d6362210b807146a26044c88d839208aec273bb0d9184/more_itertools-11.1.0.tar.gz", hash = "sha256:48e8f4d9e7e5878571ecf6f2b4e57634f93cd474cc8cfbd2376f2d11b396e30d", size = 145772, upload-time = "2026-05-22T14:14:29.909Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/3d/1087453384dbde46a8c7f9356eead2c58be8a7bf156bca40243377c85715/more_itertools-11.1.0-py3-none-any.whl", hash = "sha256:4b65538ae22f6fed0ce4874efd317463a7489796a0939fa66824dd542125a192", size = 72226, upload-time = "2026-05-22T14:14:28.824Z" },
 ]
 
 [[package]]
