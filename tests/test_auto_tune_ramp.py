@@ -18,6 +18,7 @@ Focus areas:
 
 import asyncio
 import math
+from dataclasses import asdict, fields
 from types import SimpleNamespace
 
 import pytest
@@ -1102,9 +1103,10 @@ class TestStopReasons:
             make_run_point(lambda k: k * 1000.0),
         )
         d = o.to_dict()
-        assert d["version"] == 1
+        assert d["version"] == 2
         assert d == {
-            "version": 1,
+            "version": 2,
+            "points": [asdict(p) for p in o.points],
             "bracket_reason": STOP_UPPER_BOUND,
             "stop_reason": STOP_UPPER_BOUND,
             "target": "saturation",
@@ -1120,9 +1122,15 @@ class TestStopReasons:
             "probe_ceiling": None,
             "probe_relaxed": 0,
             "probe_bound": None,
+            "sla_thresholds": {},
         }
-        # The points travel in their own report files, never in the sidecar.
-        assert "points" not in d
+        # v2: the measured grid is inline as well as in the report files, so a
+        # reader holding only this file can redraw the curve (`benchmark-runner
+        # chart`). Every field of PointMetrics survives the round trip — the
+        # renderer reads ttft_p99_ms/achieved_rate/success, none of which the
+        # summary fields above carry.
+        assert [p["knob"] for p in d["points"]] == [p.knob for p in o.points]
+        assert set(d["points"][0]) == {f.name for f in fields(PointMetrics)}
 
 
 class TestTheBudgetBoundsEachPoint:

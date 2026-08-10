@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from guidellm.benchmark import BenchmarkScenario
@@ -89,7 +89,15 @@ STOP_POINT_FAILED = "point_failed"  # a point produced no benchmark
 
 # Schema version of the ramp outcome, so a consumer reading an older sidecar can
 # tell "field absent" from "field not yet invented".
-RAMP_OUTCOME_VERSION = 1
+#
+# v2 added ``points``: the measured grid, inline. The points already travel in
+# their own dual_json report files, so this is a DUPLICATE — deliberately, because
+# the two have different readers. gpustack globs the report files (it wants the
+# full per-request detail); ``benchmark-runner chart`` wants one file holding the
+# curve and the reason it stopped, and reassembling that from a directory of
+# reports means reimplementing the manager's glob + schema in the CLI. Additive
+# and read via ``.get()`` downstream, so an older consumer is unaffected.
+RAMP_OUTCOME_VERSION = 2
 
 # ── Saturation probe sizing ───────────────────────────────────────────────────
 # The probe answers one question: roughly how many requests per second can this
@@ -255,24 +263,29 @@ class AutoTuneConfig:
             (self.sla_p99_latency_ms, m.latency_p99_ms),
         ]
 
+    def set_thresholds(self) -> dict[str, float]:
+        """The SLA thresholds actually SET, by field name (unset ones dropped)."""
+        names = (
+            "sla_avg_ttft_ms",
+            "sla_p95_ttft_ms",
+            "sla_p99_ttft_ms",
+            "sla_avg_tpot_ms",
+            "sla_p95_tpot_ms",
+            "sla_p99_tpot_ms",
+            "sla_avg_latency_ms",
+            "sla_p95_latency_ms",
+            "sla_p99_latency_ms",
+        )
+        return {
+            name: float(getattr(self, name))
+            for name in names
+            if getattr(self, name) is not None
+        }
+
     @property
     def target(self) -> str:
         """ "sla" if ANY of the 9 SLA thresholds is set, else "saturation"."""
-        any_set = any(
-            t is not None
-            for t in (
-                self.sla_avg_ttft_ms,
-                self.sla_p95_ttft_ms,
-                self.sla_p99_ttft_ms,
-                self.sla_avg_tpot_ms,
-                self.sla_p95_tpot_ms,
-                self.sla_p99_tpot_ms,
-                self.sla_avg_latency_ms,
-                self.sla_p95_latency_ms,
-                self.sla_p99_latency_ms,
-            )
-        )
-        return "sla" if any_set else "saturation"
+        return "sla" if self.set_thresholds() else "saturation"
 
 
 @dataclass
@@ -327,11 +340,18 @@ class RampOutcome:
     # would then have to stay in sync with this file forever.
     probe_relaxed: int = 0
     probe_bound: Optional[float] = None
+    # The SET SLA thresholds (ms), by CLI field name. Carried so a reader holding
+    # only this file can say what the run was judged AGAINST — `sla_bracket` gives
+    # the boundary but not the threshold that drew it, and a chart with no
+    # threshold line cannot show how much headroom the chosen point had. None
+    # entries are dropped, so an empty dict means "saturation target".
+    sla_thresholds: Optional[dict[str, float]] = None
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-serializable facts (the points travel in their own report files)."""
+        """JSON-serializable facts, including the measured grid (see the version note)."""
         return {
             "version": RAMP_OUTCOME_VERSION,
+            "points": [asdict(p) for p in self.points],
             "bracket_reason": self.bracket_reason,
             "stop_reason": self.stop_reason,
             "target": self.target,
@@ -349,6 +369,7 @@ class RampOutcome:
             "probe_ceiling": self.probe_ceiling,
             "probe_relaxed": self.probe_relaxed,
             "probe_bound": self.probe_bound,
+            "sla_thresholds": self.sla_thresholds or {},
         }
 
 
@@ -1041,6 +1062,7 @@ async def run_ramp(  # noqa: C901
         probe_ceiling=probe_ceiling,
         probe_relaxed=probe_relaxed,
         probe_bound=saturation_bound,
+        sla_thresholds=cfg.set_thresholds(),
     )
 
 

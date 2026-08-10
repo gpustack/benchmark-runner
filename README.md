@@ -13,6 +13,9 @@ What it adds
   you to guess a load value. See "Auto-tune" below.
 - **Manual stages** (`--stages`): one single-strategy run per stage, each with its
   own request/duration limits.
+- A **terminal report** after every ramp or stage ladder: throughput/latency
+  charts, a stage table and the best measured point, redrawable later with
+  `benchmark-runner chart`. See "Terminal report" below.
 - Optional server-side progress updates during benchmarks.
 - ShareGPT dataset conversion to GuideLLM-compatible JSONL.
 - A JSON summary output format for benchmark reports.
@@ -173,6 +176,147 @@ anybody counting points, and a `capacity_plateau` stop under a loose SLA looks
 exactly like a threshold breaking at the top — with opposite advice attached in both
 cases. The file appears when the ramp returns, so its absence means "still running,
 or not a ramp at all"; a write failure is logged and does not fail the run.
+
+Terminal report
+---------------
+When a ramp or a stage ladder finishes it prints the answer, not just a directory
+of JSON. The same report is available afterwards with `benchmark-runner chart`, so
+a run that scrolled off screen — or one whose results came out of CI — can be read
+back without re-measuring anything.
+
+An `--auto-tune` ramp looks like this:
+
+```
+
+  Auto-tune ramp · axis=rate · target=saturation · 12 point(s) · 5m51s
+
+  total throughput (tok/s)
+       34k ┤                    ╭─●────●─────●────●─────●────◆─────●     
+           │          ╭●────●───╯                                  │     
+           │        ╭─╯                                            ╰╮    
+           │      ╭─╯                                               │    
+           │   ╭─●╯                                                 ╰╮   
+       17k ┤ ╭─╯                                                     ╰╮  
+           │●╯                                                        │  
+           │                                                          ╰╮ 
+           │                                                           ╰✕
+           │                                                             
+         0 ┤                                                             
+
+  TTFT p99 (log)
+     78.0s ┤                                                           ╭✕
+           │                                                          ╭╯ 
+           │                                                          │  
+           │                                                         ╭╯  
+      1.4s ┤                                                        ╭╯   
+           │                                                       ╭╯    
+           │                                                       │     
+           │       ╭───●────●─────●────●─────●────●─────●────◆─────●     
+      25ms ┤●────●─╯                                                     
+           └┬────┬─────┬────┬─────┬────┬─────┬────┬─────┬────┬─────┬────┬
+            4    8    16   20    24   26    28   29    30   31    32   48
+                                 offered rate (req/s)
+
+  ◆ recommended  ● measured  ✕ overloaded
+
+     offered  achieved   TTFT p99      TPOT      tok/s                        ok
+  ────────────────────────────────────────────────────────────────────────────
+           4       3.9       25ms     4.0ms     12,558  ███████             100%
+           8       7.8       34ms     5.8ms     20,610  ███████████         100%
+          16      15.5       51ms     9.4ms     29,083  ███████████████     100%
+          20      19.4       60ms    11.2ms     31,206  █████████████████   100%
+          24      23.3       69ms    13.0ms     32,567  █████████████████   100%
+          26      25.2       73ms    13.9ms     33,052  ██████████████████  100%
+          28      27.2       78ms    14.8ms     33,440  ██████████████████  100%
+          29      28.1       80ms    15.2ms     33,604  ██████████████████  100%
+          30      29.1       82ms    15.7ms     33,751  ██████████████████  100%
+   ◆      31      29.6       84ms    16.2ms     33,882  ██████████████████  100%
+          32      29.6       95ms    16.6ms     32,300  █████████████████   100%
+   ✕      48      29.6      78.0s    23.8ms      5,225  ███                  93%
+
+  ◆ Recommended: 31 req/s  →  33,882 tok/s
+    TTFT p99 84ms · TPOT 16.2ms · achieved 29.6 req/s · 100% ok
+    stopped: converged (bracket: overloaded) · probe ceiling 28.2 req/s
+```
+
+The two panels share one x axis: throughput over offered load on top, the tail
+latency that load costs underneath. `◆` is the recommended operating point, `✕`
+a point that shed requests or fell off the far side of the peak. The verdict line
+carries the number you came for, and the stop reason says whether the search
+converged or ran out of budget.
+
+`--chart` selects how much is drawn:
+
+| `--chart` | Shows |
+|---|---|
+| `auto` (default) | throughput + latency panels, stage table, recommended point |
+| `all` | ... plus offered-vs-achieved rate, and the latency-throughput frontier |
+| `none` | stage table and verdict only — no character grids |
+
+`--disable-console` silences the report along with everything else, so a headless
+run (gpustack drives the runner this way) is unaffected.
+
+**Verdicts match the web report.** `◆ recommended` is `min(sla_met, peak)` and
+`✕ overloaded` means a failure rate over 5% *or* a point past the peak delivering
+under 95% of it — the same rules the GPUStack UI badges each stage with. A point
+one step past the knee at ~peak throughput is deliberately NOT overload; it is
+often the true argmax.
+
+**It degrades rather than breaks.** Colour is added only on a TTY (and never
+carries information a glyph does not), the box drawing falls back to ASCII on a
+stream that cannot encode it, and a rendering failure warns on stderr instead of
+failing a benchmark that already measured fine.
+
+Re-drawing a saved ramp:
+
+```bash
+# The sidecar itself, or the directory holding it.
+benchmark-runner chart ./benchmarks/42__ramp.json
+benchmark-runner chart ./benchmarks --chart all
+
+# Pin the geometry for docs and golden files.
+benchmark-runner chart ./benchmarks --width 61 --ascii
+```
+
+This reads the run's curve sidecar — `{base}__ramp.json` for `--auto-tune`,
+`{base}__curve.json` for `--stages`. The ramp's carries the measured grid inline
+from schema version 2 on; a sidecar written by an older runner has the stop reasons
+but not the curve, and `chart` says so rather than drawing an empty report.
+
+### Stage ladders report less, on purpose
+
+`--stages` gets the same charts, the same table and the same overload verdicts —
+it is the same curve, just with the load points chosen by you instead of found by
+a search. What it does **not** get is a recommendation:
+
+```
+  ▲ peak  ● measured  ✕ overloaded
+
+     offered  achieved   TTFT p99      TPOT      tok/s                        ok
+  ────────────────────────────────────────────────────────────────────────────
+           4       3.9       25ms     4.0ms     12,558  ███████             100%
+           8       7.8       34ms     5.8ms     20,610  ███████████         100%
+          16      15.5       51ms     9.4ms     29,083  ███████████████     100%
+          24      23.3       69ms    13.0ms     32,567  █████████████████   100%
+   ▲      31      29.6       84ms    16.2ms     33,882  ██████████████████  100%
+   ✕      40      29.6      10.3s    20.2ms     19,024  ██████████           93%
+
+  ▲ Best of the stages you ran: 31 req/s  →  33,882 tok/s
+    TTFT p99 84ms · TPOT 16.2ms · achieved 29.6 req/s · 100% ok
+    the ladder brackets this peak — both neighbours of 31 req/s are lower
+    6 stage(s), at the loads you gave — no search was run
+    Use --auto-tune to have the peak located.
+```
+
+The ramp earns "run at 31 req/s" by bracketing the peak and converging on it. A
+stage list has measured only the rungs it was handed, so its argmax is *the best
+of what you ran*, and the line that matters is whether the ladder contained a peak
+at all — an argmax at either end means the curve was still moving when the rungs
+ran out, and the real peak is outside what was measured.
+
+Single-strategy runs (`--profile constant --rate 10`, `--profile throughput`, ...)
+measure one point, so there is no curve to draw and no sidecar is written; guidellm
+prints its own result table for those.
 
 Manual stages
 -------------

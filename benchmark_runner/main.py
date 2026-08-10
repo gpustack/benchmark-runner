@@ -29,8 +29,10 @@ import json
 import os
 import platform
 import sys
+import time
+from dataclasses import asdict
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import click
 from pydantic import ValidationError
@@ -42,7 +44,25 @@ from benchmark_runner.scenario_builder import build_scenario_args
 from benchmark_runner.sharegpt_adapter import prepare_datasets
 from guidellm.benchmark.entrypoints import benchmark_generative_text
 from benchmark_runner.progress import ServerBenchmarkerProgress
-from benchmark_runner.auto_tune import AutoTuneConfig, RampOutcome, run_ramp
+from benchmark_runner.auto_tune import (
+    RAMP_OUTCOME_VERSION,
+    AutoTuneConfig,
+    RampOutcome,
+    run_ramp,
+    # The ramp's guidellm-benchmark -> PointMetrics mapping, reused verbatim for
+    # manual stages. Private to auto_tune only in the underscore sense: it is the
+    # shared definition of "one measured point", and a second copy here is exactly
+    # how the stage table and the ramp table would drift apart (which metric TPOT
+    # reads from, whether latency is seconds or ms). Imported rather than renamed
+    # because five tests call it by name.
+    _normalize,
+)
+from benchmark_runner.chart import (
+    CHART_AUTO,
+    CHART_MODES,
+    detect_style,
+    render_curve_report,
+)
 
 try:
     import uvloop
@@ -61,6 +81,141 @@ from guidellm.utils import cli as cli_tools
 # Sidecar name for the ramp outcome, deliberately NOT matching the manager's
 # "{base}__p{index}.json" point glob.
 RAMP_OUTCOME_SUFFIX = "__ramp.json"
+
+# Sidecar name for a --stages ladder's curve. Deliberately NOT the ramp's suffix:
+# the two carry different claims (a search that converged vs. a list of rungs the
+# user chose), and a reader that cannot tell them apart would report one as the
+# other. Also not matched by the manager's "{base}__p{index}.json" point glob.
+CURVE_OUTCOME_SUFFIX = "__curve.json"
+# Bumped independently of RAMP_OUTCOME_VERSION — these are two schemas that happen
+# to share a renderer, not one schema with two writers.
+CURVE_OUTCOME_VERSION = 1
+
+
+def _finish_stages(
+    points: list,
+    *,
+    axis: str,
+    output_dir: Path | None,
+    output_base: str,
+    elapsed: float,
+    chart_mode: str,
+    console: Any,
+    log: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> None:
+    """Sidecar + terminal report for a finished ``--stages`` ladder.
+
+    A stage list is a manual sweep: the user picks the load points instead of the
+    ramp searching for them, but what comes back is the same curve, so it gets the
+    same chart and the same overload verdicts.
+
+    What it does NOT get is a recommendation. The ramp earns "run at 31 req/s" by
+    bracketing and converging on it; a stage list has measured only the rungs it
+    was given, and reusing that wording would claim a search that never happened.
+    ``target="stages"`` is what tells the renderer to report the ladder's peak and
+    whether the ladder actually contained one — see ``chart._verdict``.
+    """
+    if not points:
+        return
+    outcome = {
+        "version": CURVE_OUTCOME_VERSION,
+        "points": [asdict(p) for p in points],
+        "axis": axis,
+        "target": "stages",
+        # A ladder ends because it ran out of rungs. There is no search to stop, so
+        # the field carries the one fact that IS true rather than a borrowed reason.
+        "stop_reason": "stages_completed",
+        "bracket_reason": "",
+        "points_measured": len(points),
+        "sla_bracket": None,
+        "sla_thresholds": {},
+        "elapsed_seconds": round(elapsed, 2),
+        "probe_ceiling": None,
+    }
+    _write_curve_sidecar(output_dir, output_base, outcome, log, warn)
+    if console is not None:
+        _emit_curve_report(
+            outcome, chart_mode, stream=getattr(console, "file", sys.stdout)
+        )
+
+
+def _write_curve_sidecar(
+    output_dir: Path | None,
+    output_base: str,
+    outcome: dict,
+    log: Callable[[str], None],
+    warn: Callable[[str], None],
+) -> None:
+    """Write ``{base}__curve.json`` beside the stage reports.
+
+    A separate suffix from the ramp's, because the two say different things and a
+    consumer must be able to tell them apart by name: ``__ramp.json`` carries the
+    reasons an adaptive SEARCH ended, ``__curve.json`` carries a ladder the user
+    wrote out. Neither name is matched by gpustack's point glob (which requires a
+    ``{id}__p`` prefix), so this adds a file to the benchmark directory without
+    entering any existing collection.
+
+    Best-effort for the same reason the ramp's is: the stage reports are the
+    measurement, and a diagnostic file must not fail a run that succeeded.
+    """
+    try:
+        directory = Path(output_dir) if output_dir is not None else Path.cwd()
+        path = directory / f"{output_base}{CURVE_OUTCOME_SUFFIX}"
+        path.write_text(json.dumps(outcome, indent=2, sort_keys=True), encoding="utf-8")
+        log(f"Wrote stage curve: {path}")
+    except Exception as e:  # noqa: BLE001 - diagnostics must not break the run
+        warn(f"Could not write stage curve sidecar: {e}")
+
+
+def _emit_curve_report(
+    outcome: dict,
+    mode: str,
+    stream: Any = None,
+    style: Any = None,
+    strict: bool = False,
+) -> None:
+    """Print the terminal report for a finished ramp or stage ladder.
+
+    Takes the sidecar DICT, not the RampOutcome, so the live run and the ``chart``
+    subcommand render from the same input: whatever the live path shows is exactly
+    what re-rendering the saved file reproduces. Best-effort for the same reason
+    the sidecar write is — the measurement is in the files, and a run must not
+    fail because a terminal could not be drawn on.
+    """
+    stream = stream if stream is not None else sys.stdout
+    try:
+        bracket = outcome.get("sla_bracket") or [None, None]
+        lines = render_curve_report(
+            outcome.get("points") or [],
+            axis=outcome.get("axis") or "rate",
+            target=outcome.get("target") or "saturation",
+            stop_reason=outcome.get("stop_reason") or "",
+            bracket_reason=outcome.get("bracket_reason") or "",
+            sla_met_knob=bracket[0] if len(bracket) > 0 else None,
+            sla_first_fail_knob=bracket[1] if len(bracket) > 1 else None,
+            sla_thresholds=outcome.get("sla_thresholds") or {},
+            elapsed_seconds=outcome.get("elapsed_seconds"),
+            probe_ceiling=outcome.get("probe_ceiling"),
+            mode=mode,
+            style=style if style is not None else detect_style(stream),
+        )
+        for line in lines:
+            print(line, file=stream)
+        stream.flush()
+    except Exception as e:  # noqa: BLE001 - a chart must not break a benchmark
+        message = f"Could not render {_sidecar_hint(outcome)}: {e}"
+        # strict = the `chart` subcommand, whose only job is to draw. The live run
+        # warns instead: a benchmark that measured fine must not die because a
+        # terminal could not be written to.
+        if strict:
+            raise click.ClickException(message)
+        print(f"[WARN] {message}", file=sys.stderr)
+
+
+def _sidecar_hint(outcome: dict) -> str:
+    """Name the thing that failed to draw, for an error a user has to act on."""
+    return "the stage curve" if outcome.get("target") == "stages" else "the ramp report"
 
 
 def _write_ramp_outcome(
@@ -621,6 +776,20 @@ def benchmark():
     is_flag=True,
     help="Disable interactive console progress updates.",
 )
+@click.option(
+    "--chart",
+    "chart_mode",
+    type=click.Choice(list(CHART_MODES)),
+    default=CHART_AUTO,
+    show_default=True,
+    help=(
+        "Terminal report printed after an --auto-tune ramp: 'auto' = load/throughput "
+        "chart, latency chart, stage table and the recommended operating point; "
+        "'all' additionally plots offered-vs-achieved rate and the "
+        "latency-throughput frontier; 'none' = table and verdict only. Ignored by "
+        "non-ramp modes and silenced by --disable-console."
+    ),
+)
 # Aggregators configuration
 @click.option(
     "--warmup",
@@ -779,6 +948,7 @@ def run(**kwargs):  # noqa: C901
             kwargs["outputs"] = (path.name,)
 
     # Handle console options
+    chart_mode = kwargs.pop("chart_mode", CHART_AUTO)
     disable_console = kwargs.pop("disable_console", False)
     disable_console_interactive = (
         kwargs.pop("disable_console_interactive", False) or disable_console
@@ -946,13 +1116,18 @@ def run(**kwargs):  # noqa: C901
                 param_hint=".".join(loc) or "spec",
             ) from err
 
-        asyncio.run(
+        # The report is returned, not discarded: a stage list is a manual load
+        # ladder, so its per-stage metrics are the same curve the ramp charts and
+        # the only place they exist is this return value. Single-run callers
+        # ignore it.
+        report, _ = asyncio.run(
             benchmark_generative_text(
                 args=args,
                 progress=progress,
                 console=console,
             )
         )
+        return report
 
     if uvloop is not None:
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -1068,6 +1243,16 @@ def run(**kwargs):  # noqa: C901
             f"bracket={outcome.bracket_reason} stop={outcome.stop_reason} "
             f"stopped_at={outcome.stopped_at}"
         )
+        # The answer, on screen. Written to the console's underlying stream rather
+        # than through Console.print: the report carries its own ANSI and its own
+        # fixed-width grid, and rich would re-wrap and re-style both. `console is
+        # None` is exactly --disable-console, so that flag silences this too.
+        if console is not None:
+            _emit_curve_report(
+                outcome.to_dict(),
+                chart_mode,
+                stream=getattr(console, "file", sys.stdout),
+            )
     elif stages:
         # v2.1 stages: one single-strategy run per stage, each carrying its own
         # max_requests / max_seconds. Each writes a separate output file
@@ -1081,6 +1266,8 @@ def run(**kwargs):  # noqa: C901
         # 2 concurrent streams and actually offered whatever the server could take.
         stage_profile = "concurrent" if axis == "concurrency" else "constant"
         base_outputs = list(kwargs.get("outputs") or [])
+        stage_points: list = []
+        stages_started = time.monotonic()
         for i, stage in enumerate(stages):
             if not isinstance(stage, dict) or "rate" not in stage:
                 raise click.BadParameter(
@@ -1133,8 +1320,38 @@ def run(**kwargs):  # noqa: C901
                 f"max_requests={local.get('max_requests')} "
                 f"max_seconds={local.get('max_seconds')}"
             )
-            _run_once(local)
+            report = _run_once(local)
+            # Same normalization the ramp applies to its points, so the two modes
+            # produce one comparable curve rather than two dialects of one. A stage
+            # that produced no benchmark is skipped rather than charted as a hole:
+            # the ladder is the user's, and a missing rung is visible as a gap in
+            # the table's rate column.
+            if report is not None and getattr(report, "benchmarks", None):
+                stage_points.append(
+                    _normalize(report.benchmarks[0], float(stage["rate"]), i)
+                )
+        _finish_stages(
+            stage_points,
+            axis=axis,
+            output_dir=kwargs.get("output_dir"),
+            output_base=_output_base((base_outputs or ["benchmarks.dual_json"])[0]),
+            elapsed=time.monotonic() - stages_started,
+            chart_mode=chart_mode,
+            console=console,
+            log=_log,
+            warn=_warn,
+        )
     else:
+        # A single-strategy run measures ONE point, so there is no curve to draw
+        # and no sidecar to write; guidellm prints its own result table for it.
+        # Say so when --chart was asked for anyway, rather than accepting the flag
+        # and doing nothing — a silently ignored option reads as a broken chart.
+        if chart_mode != CHART_AUTO:
+            _warn(
+                f"--chart {chart_mode} applies to --auto-tune and --stages, which "
+                "measure a curve. This run has a single strategy, so there is "
+                "nothing to plot; the flag is ignored."
+            )
         _run_once(dict(kwargs))
 
 
@@ -1165,6 +1382,108 @@ def _normalize_request_handlers(backend_kwargs: dict) -> None:
             # Explicit request_handlers entries win on clash.
             request_handlers.setdefault(path, value)
         backend_kwargs["request_handlers"] = request_handlers
+
+
+@cli.command(
+    "chart",
+    short_help="Re-draw the report for a finished ramp or stage ladder.",
+    help=(
+        "Render the terminal report — load/throughput chart, latency chart, stage "
+        "table and the best measured point — from a run's curve sidecar: "
+        f"'{RAMP_OUTCOME_SUFFIX.lstrip('_')}' for --auto-tune, "
+        f"'{CURVE_OUTCOME_SUFFIX.lstrip('_')}' for --stages. PATH is that file, or "
+        "a directory containing one. Both modes print this themselves when they "
+        "finish; this command is for reading it back afterwards, when the run "
+        "scrolled away or the results came from CI."
+    ),
+)
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--chart",
+    "chart_mode",
+    type=click.Choice(list(CHART_MODES)),
+    default=CHART_AUTO,
+    show_default=True,
+    help="Which charts to draw. See `benchmark run --help`.",
+)
+@click.option(
+    "--width",
+    # Bounded, not merely advisory: the renderer divides by (width - 1) to place
+    # axis ticks, so a width of 1 is a ZeroDivisionError, and anything under ~20
+    # has no room for a y-label gutter plus a readable curve.
+    type=click.IntRange(20, 300),
+    default=None,
+    help=(
+        "Plot width in columns (20-300). Defaults to fitting the terminal. Pin it "
+        "to get byte-identical output across machines (docs, README, golden files)."
+    ),
+)
+@click.option(
+    "--ascii",
+    "force_ascii",
+    is_flag=True,
+    help="Draw with ASCII only, ignoring what the terminal claims to support.",
+)
+def chart(path: Path, chart_mode: str, width: int | None, force_ascii: bool):
+    sidecar = _resolve_ramp_sidecar(path)
+    try:
+        outcome = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise click.ClickException(f"Could not read {sidecar}: {e}") from e
+    # A pre-v2 ramp sidecar predates inline points, so the curve is on disk but not
+    # in THIS file. Say which file is short rather than printing an empty report —
+    # and only blame the schema version for the file that actually has that history
+    # (a stage curve has carried its points since v1).
+    if not outcome.get("points"):
+        detail = ""
+        if sidecar.name.endswith(RAMP_OUTCOME_SUFFIX):
+            detail = (
+                f" (schema version {outcome.get('version', '?')}; inline points "
+                f"need version {RAMP_OUTCOME_VERSION}) — re-run the ramp to get a "
+                "chartable sidecar"
+            )
+        raise click.ClickException(f"{sidecar} carries no measured points{detail}.")
+    style = detect_style(sys.stdout, width=width)
+    if force_ascii:
+        style.unicode = False
+    # strict=True: drawing IS this command's only job, so a render failure is a
+    # failure. The live run swallows the same error on purpose (a benchmark that
+    # measured fine must not die because a terminal could not be drawn on), but
+    # here exiting 0 having printed nothing is a silent no-op in CI.
+    _emit_curve_report(outcome, chart_mode, stream=sys.stdout, style=style, strict=True)
+
+
+def _resolve_ramp_sidecar(path: Path) -> Path:
+    """Accept either a sidecar itself or a directory holding exactly one.
+
+    A benchmark directory is what a user has a path to (it is what --output-dir
+    took), while the sidecar's name is derived from an output base id they never
+    chose. Globbing for it is the difference between `chart ./benchmarks` and
+    making them go find `123__ramp.json` first.
+
+    Both curve-bearing modes are searched, because a user asking to see the chart
+    for a directory does not think in terms of which writer produced it.
+    """
+    if path.is_file():
+        return path
+    found = sorted(
+        p
+        for suffix in (RAMP_OUTCOME_SUFFIX, CURVE_OUTCOME_SUFFIX)
+        for p in path.glob(f"*{suffix}")
+    )
+    if not found:
+        raise click.ClickException(
+            f"No '*{RAMP_OUTCOME_SUFFIX}' or '*{CURVE_OUTCOME_SUFFIX}' file in "
+            f"{path}. An --auto-tune ramp writes the first and --stages the "
+            "second; a single-strategy --profile run measures no curve and writes "
+            "neither."
+        )
+    if len(found) > 1:
+        listing = ", ".join(p.name for p in found)
+        raise click.ClickException(
+            f"{len(found)} ramp sidecars in {path} ({listing}). Pass the one to draw."
+        )
+    return found[0]
 
 
 @cli.command(

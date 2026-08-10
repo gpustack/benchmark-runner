@@ -323,7 +323,11 @@ def test_ramp_outcome_is_written_beside_the_point_files(monkeypatch, tmp_path):
     assert facts["stop_reason"] == "converged"
     assert facts["stopped_at"] == 256.0
     assert facts["sla_bracket"] == [256.0, None]
-    assert facts["version"] == 1
+    assert facts["version"] == 2
+    # v2 carries the measured grid inline, which is what `benchmark-runner chart`
+    # redraws from. Without it the sidecar says only why the search stopped, and
+    # rebuilding the curve means globbing and re-parsing the point reports.
+    assert len(facts["points"]) == facts["points_measured"]
     # Not matched by the point glob.
     assert "__p" not in path.name.replace("__ramp", "")
 
