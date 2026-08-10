@@ -33,6 +33,7 @@ from benchmark_runner.auto_tune import (
     STOP_CONVERGED,
     STOP_OVERLOADED,
     STOP_POINT_FAILED,
+    STOP_PROBE_BOUND,
     STOP_SLA_FAILED,
     STOP_UPPER_BOUND,
     run_ramp,
@@ -672,13 +673,18 @@ def test_probe_caps_upper_bound():
 def test_probe_bound_holds_for_a_wide_upper_bound(ceiling):
     """A generous upper_bound must not leak into the probed range.
 
-    The whole point of passing upper_bound=1024 with the probe on is "let the
-    server tell us the range" — so the geometric ramp must stay within
-    ceil(ceiling*1.2) and never double on toward 128/256.
+    The point of passing upper_bound=1024 with the probe on is "let the server
+    tell us the range", so the ramp must stay near the probed ceiling instead of
+    doubling on toward 256/1024.
+
+    "Near" is ONE relaxation, not the cap itself: the cap bounds the step, and a
+    measured point that cleared the growth criteria overrules it (see
+    TestTheCapDoesNotOutrankAMeasurement). So the ramp may take one step past
+    ceil(ceiling*1.2) — and must then stop there, on measured evidence.
     """
     cap = math.ceil(ceiling * 1.2)
     # Achieved rate saturates at the ceiling; tps tracks it.
-    pts = run(
+    o = run_outcome(
         sat_cfg(axis="rate", lower_bound=4, upper_bound=1024, probe_saturation=True),
         make_run_point(
             lambda k: min(k, ceiling) * 1000.0,
@@ -686,7 +692,11 @@ def test_probe_bound_holds_for_a_wide_upper_bound(ceiling):
         ),
         probe=make_probe(ceiling),
     )
-    assert max(knobs(pts)) <= cap, f"ceiling={ceiling} cap={cap}: {knobs(pts)}"
+    ks = knobs(o.points)
+    assert max(ks) <= 2 * cap, f"ceiling={ceiling} cap={cap}: {ks}"
+    assert max(ks) < 128, f"the wide upper_bound leaked in: {ks}"
+    # Stopped because the measurements said so, not because the range ran out.
+    assert o.bracket_reason == STOP_CAPACITY_PLATEAU
 
 
 def test_probe_skipped_for_sla():
@@ -1311,3 +1321,99 @@ class TestTpotIsDecodeOnly:
         # nobody asked about must not fail the point.
         m = _normalize(self._report(itl=0.0, tpot_incl_ttft=0.0), knob=4.0, index=0)
         assert _passes_sla(m, sla_cfg(sla_avg_ttft_ms=500.0)) is True
+
+
+class TestTheCapDoesNotOutrankAMeasurement:
+    """The soft cap bounds the STEP, it does not end the search.
+
+    Reaching it means every measured criterion just passed on that point, so the
+    only thing still arguing for a stop is a 10s burst estimate of the very
+    quantity that point measured over 30s. Letting the estimate win truncates the
+    curve one point short of the evidence a reader needs — and the probe is kept
+    out of the grid, so nothing on screen explains the stop.
+    """
+
+    def _bm40(self, ceiling=25.6, sustained=25.9):
+        """A real run's shape: linear to ~26 rps, then pinned and slowly losing.
+
+        Probe reads 25.6 -> cap ceil(25.6*1.2) = 31, onto which the doubling
+        16 -> 32 is clamped. Achieved at 31 is 25.9 — past the knee, but only 1%
+        above the probed ceiling, which is what used to end the run. Past the knee
+        throughput decays as queueing grows (measured on the same deployment:
+        -2.6% at 32, -1.7% at 33, TTFT 987ms -> 4171ms).
+        """
+
+        def curve(k):
+            if k <= sustained:
+                return k * 1160.0
+            return sustained * 1160.0 * max(0.5, 1.0 - 0.0026 * (k - sustained))
+
+        return (
+            make_run_point(curve, achieved_fn=lambda k: min(k, sustained)),
+            make_probe(ceiling),
+        )
+
+    def _run(self, lower_bound=4, upper_bound=1024, rp=None, probe=None):
+        if rp is None:
+            rp, probe = self._bm40()
+        return run_outcome(
+            sat_cfg(
+                axis="rate",
+                lower_bound=lower_bound,
+                upper_bound=upper_bound,
+                probe_saturation=True,
+            ),
+            rp,
+            probe=probe,
+        )
+
+    def test_the_run_continues_past_the_cap_and_stops_on_a_measured_point(self):
+        o = self._run()
+        # Phase 1: 31 cleared the growth criteria (+62% achieved over 16), so the
+        # cap gave way rather than ending the search; 62 did not, and THAT is what
+        # stopped it. (Everything after is Phase 2 refining inside the bracket.)
+        assert knobs(o.points)[:5] == [4.0, 8.0, 16.0, 31.0, 62.0], knobs(o.points)
+        assert o.probe_relaxed == 1
+        assert o.bracket_reason == STOP_CAPACITY_PLATEAU
+        assert o.stopped_at == 62.0
+
+    def test_the_turnover_is_in_the_grid_not_just_in_the_sidecar(self):
+        # The point of paying for the extra point: the top of the curve delivers
+        # LESS than the point below it, so "this is the peak" is legible on the
+        # chart. Stopping at the cap leaves a grid still climbing at its last row.
+        pts = self._run().points
+        top = max(pts, key=lambda p: p.knob)
+        assert top.output_tps < peak_tps(pts)
+
+    def test_the_hard_bound_still_ends_it(self):
+        # Only cfg.upper_bound is a hard stop: a server that keeps up all the way
+        # must still stop at the range the user asked for, and say so.
+        o = self._run(
+            upper_bound=64,
+            rp=make_run_point(lambda k: k * 1000.0, achieved_fn=lambda k: k),
+            probe=make_probe(10.0),  # cap 12, relaxed repeatedly, never binding
+        )
+        assert max(knobs(o.points)) == 64.0
+        assert o.bracket_reason == STOP_UPPER_BOUND
+
+    def test_the_first_point_is_still_the_probes_to_stop(self):
+        """Nothing measured yet = nothing to overrule the estimate with.
+
+        lower_bound above the cap: no previous point exists, so none of the growth
+        criteria can fire and doubling blind is unbounded — 512 against a 25 rps
+        server puts the next point at 1024, i.e. 30k requests draining at 25 rps.
+        """
+        o = self._run(
+            lower_bound=64,
+            rp=make_run_point(
+                lambda k: min(k, 23.6) * 1200.0, achieved_fn=lambda k: min(k, 23.6)
+            ),
+            probe=make_probe(23),
+        )
+        assert knobs(o.points) == [64.0]
+        assert o.probe_relaxed == 0
+        assert o.bracket_reason == STOP_PROBE_BOUND
+        # Named apart from the user's range, because the advice is opposite:
+        # raising upper_bound changes nothing when OUR estimate stopped the search
+        # (the probe re-derives its cap on every run).
+        assert o.probe_bound is not None and o.probe_bound < o.upper_bound

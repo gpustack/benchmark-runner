@@ -77,6 +77,11 @@ STOP_SLA_FAILED = "sla_failed"  # a point breached the SLA -> bracket found
 STOP_CAPACITY_PLATEAU = "capacity_plateau"  # throughput stopped climbing
 STOP_OVERLOADED = "overloaded"  # success rate fell under the floor
 STOP_UPPER_BOUND = "upper_bound"  # reached the top of the search range
+# Reached the probe's soft cap with no measured point to overrule it — only
+# possible when lower_bound already sits at/above the cap, i.e. the FIRST point
+# tripped it. Distinct from `upper_bound` because the advice is opposite: raising
+# the range does nothing here, the probe re-derives its cap on every run.
+STOP_PROBE_BOUND = "probe_bound"
 STOP_BUDGET_POINTS = "budget_points"  # max_points spent
 STOP_BUDGET_SECONDS = "budget_seconds"  # max_total_seconds spent
 STOP_CONVERGED = "converged"  # the search interval closed
@@ -662,9 +667,13 @@ async def run_ramp(  # noqa: C901
     #    the bound and re-run" verdict nonsense: the bound WAS 1024, we stopped at
     #    38 of our own accord, and raising it changes nothing because the probe
     #    re-derives the cap every run.
-    #  * It YIELDS to evidence. Reaching it while throughput is still climbing
-    #    means the probe underestimated, so the cap doubles rather than truncating
-    #    a real curve. Only cfg.upper_bound is a hard stop.
+    #  * It YIELDS to evidence — to ANY measured point, not just to one that beats
+    #    the probe's own number. Reaching the cap means the growth criteria just
+    #    passed on that point, so the cap doubles rather than truncating a curve
+    #    the measurements say is still climbing. It only gets to stop the search
+    #    when there is no measured point to consult (lower_bound already above the
+    #    cap), where it reports `probe_bound` rather than `upper_bound`. Only
+    #    cfg.upper_bound is a hard stop.
     #  * It does NOT lift the ramp's start. Starting at ceiling/4 saved about one
     #    point (~30s) at lower_bound=4 — every sub-saturation point costs the same
     #    ~30s window, since requests and drain rate scale together — and cost three
@@ -818,26 +827,46 @@ async def run_ramp(  # noqa: C901
             prev_knob = knob
             bound = _bound()
             if knob >= bound:
-                # Reached the probe's soft cap. Was the ceiling estimate wrong?
-                # The test is whether the server is STILL KEEPING UP at this knob
-                # (achieved rate meaningfully above the probed ceiling), not
-                # whether throughput is still climbing: at the moment the cap is
-                # reached, the previous step's growth says nothing useful — offered
-                # 32 -> 60 against a true ceiling of 50 still shows +56% achieved
-                # growth even though the server just saturated. Comparing against
-                # the probe's own number tests exactly the thing in doubt (that
-                # ~2s estimate), and a wrong answer here costs or saves a single
-                # point. cfg.upper_bound stays the hard stop and the cap only ever
-                # doubles, so this relaxes finitely.
-                still_keeping_up = (
+                # Reached a bound. Which one, and does it get to end the search?
+                #
+                # THE SOFT CAP DOES NOT END A MULTI-POINT SEARCH. Reaching this
+                # line means every measured criterion above just passed on THIS
+                # point — throughput grew, the server kept up, nothing overloaded —
+                # so the measurements say the run is still climbing. A 10s burst
+                # estimate does not get to overrule a 30s steady-state measurement
+                # of the very quantity it was estimating.
+                #
+                # It also cannot be argued with on screen. The probe is kept out of
+                # the point grid on purpose (its numbers are burst artefacts), so a
+                # run that stops here leaves a chart still rising at its last point
+                # with no visible reason — it reads as a bug, and the coverage
+                # verdict then tells the user to raise a bound that was never the
+                # constraint. Measured: a run stopped at 31 req/s because achieved
+                # 25.87 missed ceiling*1.05 = 26.88 by one percent. A manual ladder
+                # over the same deployment confirmed 31 WAS the peak — and proved
+                # it with a single point at 32 (-2.6% throughput, 2x the TTFT).
+                # One measured point past the top is what makes a peak a peak.
+                #
+                # Cost of letting it run: bounded by construction. The previous
+                # point cleared the growth criteria, so it sits at or below
+                # saturation, and geometric doubling puts the next one at most 2x
+                # there — the "32x the ceiling" point the cap was written to
+                # prevent cannot happen while these criteria work, because they
+                # fire on the FIRST point that stops growing.
+                #
+                # The first point is the exception, and the reason the cap still
+                # exists: with nothing measured before it, none of the criteria can
+                # fire (they all compare against a previous point), so doubling
+                # blind is unbounded — lower_bound 512 against a 25 rps server puts
+                # the next point at 1024, i.e. 1024*30 requests draining at 25 rps,
+                # about twenty minutes. There the probe is the only evidence there
+                # is, so there it still decides.
+                soft_cap = saturation_bound is not None and bound < cfg.upper_bound
+                still_keeping_up = len(points) > 1 or (
                     probe_ceiling is not None
                     and m.achieved_rate > probe_ceiling * (1.0 + PLATEAU_GAIN)
                 )
-                if (
-                    saturation_bound is not None
-                    and bound < cfg.upper_bound
-                    and still_keeping_up
-                ):
+                if soft_cap and still_keeping_up:
                     saturation_bound = min(
                         float(cfg.upper_bound), saturation_bound * 2.0
                     )
@@ -849,7 +878,14 @@ async def run_ramp(  # noqa: C901
                     # optimum lies BELOW the range the user gave, which is reported
                     # via validity rather than searched for — see the comment in the
                     # plateau branch above.
-                    bracket_reason = STOP_UPPER_BOUND
+                    #
+                    # Named apart, because the advice differs: `upper_bound` means
+                    # the user's range ended the search and raising it would help,
+                    # while `probe_bound` means OUR estimate did and raising the
+                    # range would change nothing (the probe re-derives the cap every
+                    # run). Reporting both as `upper_bound` is what produced the
+                    # "raise your 1024" verdict for a run that stopped at 31.
+                    bracket_reason = STOP_PROBE_BOUND if soft_cap else STOP_UPPER_BOUND
                     break
             # Clamp the doubling to the bound instead of stepping over it. The
             # bound check above runs AFTER a point is measured, so an unclamped
