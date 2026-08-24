@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
+import sys
 from pathlib import Path
 
 import click
@@ -433,6 +434,27 @@ def benchmark():
     default=None,
     help="Authentication token or credential for progress update requests.",
 )
+@click.option(
+    "--progress-ca-cert",
+    "progress_ca_cert",
+    type=click.Path(exists=True, dir_okay=False, path_type=str),
+    default=None,
+    help="CA bundle used to verify an HTTPS --progress-url, for a server behind a "
+    "CA this image's trust store does not carry. Scoped to the progress channel: "
+    "unlike SSL_CERT_FILE it does not replace the trust store for the rest of the "
+    "process, so a bundle holding only a private CA still leaves other TLS calls "
+    "(a Hugging Face processor fetch, say) able to verify public roots.",
+)
+@click.option(
+    "--progress-insecure-skip-tls-verify",
+    "progress_insecure_skip_tls_verify",
+    is_flag=True,
+    default=False,
+    help="Skip TLS verification when reporting progress to an HTTPS --progress-url. "
+    "Last resort for when no bundle can verify the server at all; prefer "
+    "--progress-ca-cert. Takes precedence over it when both are given. Affects the "
+    "progress channel only -- never the benchmarked --target.",
+)
 def run(**kwargs):  # noqa: C901
     # Only set CLI args that differ from click defaults
     kwargs = cli_tools.set_if_not_default(click.get_current_context(), **kwargs)
@@ -486,11 +508,27 @@ def run(**kwargs):  # noqa: C901
 
     progress_url = kwargs.pop("progress_url", None)
     progress_auth = kwargs.pop("progress_auth", None)
+    progress_ca_cert = kwargs.pop("progress_ca_cert", None)
+    # `set_if_not_default` drops the flag while it sits at its False default, so
+    # read it with a default rather than assuming the key is present.
+    progress_insecure_skip_tls_verify = kwargs.pop(
+        "progress_insecure_skip_tls_verify", False
+    )
+    if progress_url and progress_insecure_skip_tls_verify:
+        print(
+            "[WARN] --progress-insecure-skip-tls-verify is enabled: TLS "
+            "verification is disabled for progress updates to the server."
+            + (" --progress-ca-cert is ignored." if progress_ca_cert else ""),
+            file=sys.stderr,
+        )
     progress_chain = [
         *(
             [
                 ServerBenchmarkerProgress(
-                    progress_url=progress_url, progress_auth=progress_auth
+                    progress_url=progress_url,
+                    progress_auth=progress_auth,
+                    ca_cert=progress_ca_cert,
+                    insecure_skip_tls_verify=progress_insecure_skip_tls_verify,
                 )
             ]
             if progress_url
