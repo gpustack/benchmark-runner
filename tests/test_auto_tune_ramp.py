@@ -1,4 +1,4 @@
-"""Unit tests for the adaptive ramp peak/SLA search (benchmark_runner.auto_tune).
+"""Unit tests for the adaptive ramp peak/SLO search (benchmark_runner.auto_tune).
 
 The ramp is driven with an INJECTED ``run_point`` that returns synthetic
 ``PointMetrics`` from a caller-supplied throughput/latency curve, so the whole
@@ -13,7 +13,7 @@ Focus areas:
     budget cap, integer de-dup, ties;
   * rate-axis "can't keep up" stop;
   * noise robustness;
-  * SLA target regression (Phase-1 pass/fail bracket + Phase-2 bisection).
+  * SLO target regression (Phase-1 pass/fail bracket + Phase-2 bisection).
 """
 
 import asyncio
@@ -27,7 +27,7 @@ from benchmark_runner.auto_tune import (
     AutoTuneConfig,
     PointMetrics,
     _normalize,
-    _passes_sla,
+    _passes_slo,
     STOP_BUDGET_POINTS,
     STOP_BUDGET_SECONDS,
     STOP_CAPACITY_PLATEAU,
@@ -35,7 +35,7 @@ from benchmark_runner.auto_tune import (
     STOP_OVERLOADED,
     STOP_POINT_FAILED,
     STOP_PROBE_BOUND,
-    STOP_SLA_FAILED,
+    STOP_SLO_FAILED,
     STOP_UPPER_BOUND,
     run_ramp,
 )
@@ -386,8 +386,8 @@ def test_probes_left_half_when_bracket_spans_it():
     assert any(16 < k < 32 for k in calls)
 
 
-# ── SLA target regression ────────────────────────────────────────────────────
-def sla_cfg(**kw):
+# ── SLO target regression ────────────────────────────────────────────────────
+def slo_cfg(**kw):
     d = dict(axis="rate", lower_bound=1, upper_bound=1024, max_points=12)
     d.update(kw)
     return AutoTuneConfig(**d)
@@ -396,8 +396,8 @@ def sla_cfg(**kw):
 def climbing(k):
     """Throughput that never saturates (grows with the knob).
 
-    The SLA cases below are about the LATENCY predicate, so their throughput curve
-    has to stay out of the way: since the SLA branch now also stops when the server
+    The SLO cases below are about the LATENCY predicate, so their throughput curve
+    has to stay out of the way: since the SLO branch now also stops when the server
     stops converting load into work, a FLAT curve would read as "saturated at the
     second point" and cut every one of these ramps short.
     """
@@ -411,58 +411,58 @@ def _max_passing_knob(points, threshold_ms):
     return max(passing) if passing else None
 
 
-def test_sla_binary_search_finds_boundary():
-    # latency = knob * 20 ms; SLA avg latency <= 200 -> boundary at knob 10.
+def test_slo_binary_search_finds_boundary():
+    # latency = knob * 20 ms; SLO avg latency <= 200 -> boundary at knob 10.
     rp = make_run_point(climbing, latency_fn=lambda k: k * 20.0)
-    pts = run(sla_cfg(sla_avg_latency_ms=200.0), rp)
+    pts = run(slo_cfg(slo_avg_latency_ms=200.0), rp)
     assert _max_passing_knob(pts, 200.0) == 10.0
     # It should have bisected the (8, 16) gap, i.e. probed something in-between.
     assert any(8 < k < 16 for k in knobs(pts))
 
 
-def test_sla_all_pass_to_upper_bound():
+def test_slo_all_pass_to_upper_bound():
     rp = make_run_point(climbing, latency_fn=lambda k: k * 1.0)
-    pts = run(sla_cfg(upper_bound=8, sla_avg_latency_ms=100000.0), rp)
+    pts = run(slo_cfg(upper_bound=8, slo_avg_latency_ms=100000.0), rp)
     assert _max_passing_knob(pts, 100000.0) == 8.0
     assert max(knobs(pts)) == 8.0
 
 
-def test_sla_first_point_fails():
-    # Even the lowest knob violates the SLA.
+def test_slo_first_point_fails():
+    # Even the lowest knob violates the SLO.
     rp = make_run_point(climbing, latency_fn=lambda k: k * 20.0)
-    pts = run(sla_cfg(sla_avg_latency_ms=10.0), rp)
+    pts = run(slo_cfg(slo_avg_latency_ms=10.0), rp)
     assert len(pts) == 1
     assert _max_passing_knob(pts, 10.0) is None
 
 
-def test_sla_pass_then_fail_creates_bracket():
+def test_slo_pass_then_fail_creates_bracket():
     # Passes through 8, fails at 16; boundary bisected within (8, 16).
     rp = make_run_point(climbing, latency_fn=lambda k: k * 20.0)
-    pts = run(sla_cfg(sla_avg_latency_ms=200.0), rp)
+    pts = run(slo_cfg(slo_avg_latency_ms=200.0), rp)
     ks = knobs(pts)
     assert 8.0 in ks and 16.0 in ks
     assert _max_passing_knob(pts, 200.0) == 10.0
 
 
-def test_sla_success_floor_fails_point():
+def test_slo_success_floor_fails_point():
     # Latency always passes, but success drops below the floor at knob >= 8, so
-    # the SLA boundary is the largest knob still under 8 -> 7 (bisected in (4,8)).
+    # the SLO boundary is the largest knob still under 8 -> 7 (bisected in (4,8)).
     def success_fn(k):
         return 0.5 if k >= 8 else 1.0
 
     rp = make_run_point(climbing, latency_fn=lambda k: 1.0, success_fn=success_fn)
-    pts = run(sla_cfg(sla_avg_latency_ms=100000.0), rp)
+    pts = run(slo_cfg(slo_avg_latency_ms=100000.0), rp)
     assert _max_passing_knob(pts, 100000.0) == 7.0
     # The failing point (8) must have been sampled to close the bracket.
     assert 8.0 in knobs(pts)
 
 
-class TestSlaStopsAtCapacity:
-    """A loose SLA must not carry the ramp through the saturated region.
+class TestSloStopsAtCapacity:
+    """A loose SLO must not carry the ramp through the saturated region.
 
     Regression for gpustack benchmark 74 (qwen3-0.6b, concurrency axis, TTFT avg
-    <= 10000ms / TPOT avg <= 1000ms): every point passed such a loose SLA, so the
-    ramp doubled to upper_bound and reported concurrency 1024 as the SLA capacity —
+    <= 10000ms / TPOT avg <= 1000ms): every point passed such a loose SLO, so the
+    ramp doubled to upper_bound and reported concurrency 1024 as the SLO capacity —
     a point delivering 6% LESS throughput than 256 at 40x the TTFT (5809ms vs
     142ms). The curves below are that run's measured numbers.
     """
@@ -509,10 +509,10 @@ class TestSlaStopsAtCapacity:
             calls=calls,
         )
 
-    def test_loose_sla_stops_where_throughput_stops_climbing(self):
+    def test_loose_slo_stops_where_throughput_stops_climbing(self):
         # 256 -> 512 is -0.6% throughput: saturated, even though the 10s TTFT
         # threshold is nowhere near being violated.
-        pts = run(self._cfg(sla_avg_latency_ms=10000.0), self._rp())
+        pts = run(self._cfg(slo_avg_latency_ms=10000.0), self._rp())
         assert knobs(pts) == [4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0]
         # The point that made the old run wrong is never measured.
         assert 1024.0 not in knobs(pts)
@@ -520,29 +520,29 @@ class TestSlaStopsAtCapacity:
         # fall back on (that is what makes the operating point 256, not 512).
         assert peak_knob(pts) == 256.0
 
-    def test_loose_sla_does_not_fabricate_a_bisection_bracket(self):
-        # Capacity saturation must NOT be recorded as an SLA failure: bisecting
+    def test_loose_slo_does_not_fabricate_a_bisection_bracket(self):
+        # Capacity saturation must NOT be recorded as an SLO failure: bisecting
         # (256, 512) would return a saturation point dressed up as a latency
         # boundary. Every measured knob stays on the doubling grid.
-        pts = run(self._cfg(sla_avg_latency_ms=10000.0), self._rp())
+        pts = run(self._cfg(slo_avg_latency_ms=10000.0), self._rp())
         assert all(
             float(k).is_integer() and int(k) & (int(k) - 1) == 0 for k in knobs(pts)
         )
 
-    def test_tight_sla_still_bisects_because_latency_breaks_first(self):
+    def test_tight_slo_still_bisects_because_latency_breaks_first(self):
         # Same curve, a threshold that bites at 64 (630ms) — well before the 512
-        # plateau. The SLA predicate is checked FIRST, so this is a real bracket.
+        # plateau. The SLO predicate is checked FIRST, so this is a real bracket.
         calls = []
-        pts = run(self._cfg(sla_avg_latency_ms=500.0), self._rp(calls))
+        pts = run(self._cfg(slo_avg_latency_ms=500.0), self._rp(calls))
         assert any(32 < k < 64 for k in calls), calls
         assert _max_passing_knob(pts, 500.0) is not None
         assert max(knobs(pts)) <= 64.0
 
     def test_rate_axis_uses_the_cant_keepup_signal_too(self):
-        # Rate axis, loose SLA, server pinned at 10 rps: achieved stops growing
+        # Rate axis, loose SLO, server pinned at 10 rps: achieved stops growing
         # even though throughput-per-token and latency both look acceptable.
         pts = run(
-            self._cfg(axis="rate", lower_bound=1, sla_avg_latency_ms=100000.0),
+            self._cfg(axis="rate", lower_bound=1, slo_avg_latency_ms=100000.0),
             make_run_point(
                 lambda k: min(k, 10) * 100.0,
                 achieved_fn=lambda k: min(k, 10),
@@ -554,24 +554,24 @@ class TestSlaStopsAtCapacity:
     def test_the_capacity_stop_is_reported_not_left_to_be_guessed(self):
         # The whole point of reporting it: this run and one that stopped because a
         # threshold broke at the top are INDISTINGUISHABLE from the grid — both end
-        # with "the highest knob measured met the SLA". Only the ramp knows which.
-        o = run_outcome(self._cfg(sla_avg_latency_ms=10000.0), self._rp())
+        # with "the highest knob measured met the SLO". Only the ramp knows which.
+        o = run_outcome(self._cfg(slo_avg_latency_ms=10000.0), self._rp())
         assert o.bracket_reason == STOP_CAPACITY_PLATEAU
         assert o.stop_reason == STOP_CAPACITY_PLATEAU  # Phase 2 never ran
         assert o.stopped_at == 512.0
         assert o.upper_bound == 1024.0  # stopped of its own accord, mid-range
-        # first_fail=None says the SLA number is a floor, not a located boundary.
-        assert o.sla_bracket == (512.0, None)
-        assert o.target == "sla"
+        # first_fail=None says the SLO number is a floor, not a located boundary.
+        assert o.slo_bracket == (512.0, None)
+        assert o.target == "slo"
 
-    def test_a_real_latency_boundary_reports_sla_failed_then_converged(self):
-        # Same curve, threshold that bites at 64: Phase 1 brackets on the SLA and
-        # Phase 2 closes the interval. Both facts are needed — "sla_failed" is why
+    def test_a_real_latency_boundary_reports_slo_failed_then_converged(self):
+        # Same curve, threshold that bites at 64: Phase 1 brackets on the SLO and
+        # Phase 2 closes the interval. Both facts are needed — "slo_failed" is why
         # the answer is a latency boundary, "converged" is that nothing cut it short.
-        o = run_outcome(self._cfg(sla_avg_latency_ms=500.0), self._rp())
-        assert o.bracket_reason == STOP_SLA_FAILED
+        o = run_outcome(self._cfg(slo_avg_latency_ms=500.0), self._rp())
+        assert o.bracket_reason == STOP_SLO_FAILED
         assert o.stop_reason == STOP_CONVERGED
-        lo, hi = o.sla_bracket
+        lo, hi = o.slo_bracket
         assert lo is not None and hi is not None and hi - lo <= 1
 
 
@@ -700,15 +700,15 @@ def test_probe_bound_holds_for_a_wide_upper_bound(ceiling):
     assert o.bracket_reason == STOP_CAPACITY_PLATEAU
 
 
-def test_probe_skipped_for_sla():
+def test_probe_skipped_for_slo():
     calls = []
     rp = make_run_point(climbing, latency_fn=lambda k: k * 20.0)
     run(
-        sla_cfg(sla_avg_latency_ms=200.0, probe_saturation=True),
+        slo_cfg(slo_avg_latency_ms=200.0, probe_saturation=True),
         rp,
         probe=make_probe(32, calls),
     )
-    assert calls == [], "probe must not run for the SLA target"
+    assert calls == [], "probe must not run for the SLO target"
 
 
 def test_probe_skipped_for_concurrency():
@@ -1073,7 +1073,7 @@ class TestStopReasons:
         assert len(o.points) == 5
         assert o.stop_reason == STOP_BUDGET_POINTS
 
-    def test_an_sla_bisection_that_closed_its_interval_reports_converged(self):
+    def test_an_slo_bisection_that_closed_its_interval_reports_converged(self):
         # Same bug, the other Phase 2. The bracket (11, 12) is reached either way;
         # only the reported reason used to differ.
         curve = piecewise({4: 100, 8: 200, 1024: 400})
@@ -1089,12 +1089,12 @@ class TestStopReasons:
             lower_bound=4,
             upper_bound=1024,
             probe_saturation=False,
-            sla_avg_latency_ms=200.0,
+            slo_avg_latency_ms=200.0,
         )
         exact = run_outcome(AutoTuneConfig(max_points=6, **cfg), rp())
         roomy = run_outcome(AutoTuneConfig(max_points=12, **cfg), rp())
         assert knobs(exact.points) == knobs(roomy.points)
-        assert exact.sla_bracket == roomy.sla_bracket == (11.0, 12.0)
+        assert exact.slo_bracket == roomy.slo_bracket == (11.0, 12.0)
         assert exact.stop_reason == roomy.stop_reason == STOP_CONVERGED
 
     def test_the_outcome_serializes_to_the_documented_shape(self):
@@ -1103,9 +1103,9 @@ class TestStopReasons:
             make_run_point(lambda k: k * 1000.0),
         )
         d = o.to_dict()
-        assert d["version"] == 2
+        assert d["version"] == 3
         assert d == {
-            "version": 2,
+            "version": 3,
             "points": [asdict(p) for p in o.points],
             "bracket_reason": STOP_UPPER_BOUND,
             "stop_reason": STOP_UPPER_BOUND,
@@ -1118,11 +1118,11 @@ class TestStopReasons:
             "max_points": 12,
             "elapsed_seconds": d["elapsed_seconds"],
             "max_total_seconds": 3600.0,
-            "sla_bracket": None,
+            "slo_bracket": None,
             "probe_ceiling": None,
             "probe_relaxed": 0,
             "probe_bound": None,
-            "sla_thresholds": {},
+            "slo_thresholds": {},
         }
         # v2: the measured grid is inline as well as in the report files, so a
         # reader holding only this file can redraw the curve (`benchmark-runner
@@ -1230,9 +1230,9 @@ class TestPerPointRequestFloor:
 
     A percentile is only as good as the samples ABOVE it: with n samples, p99 has
     n/100 above it. At n=40 (concurrency 4 x multiplier 10) p99 IS the maximum, so a
-    single outlier defines the tail — and the ramp's own Phase-1 SLA predicate reads
+    single outlier defines the tail — and the ramp's own Phase-1 SLO predicate reads
     `ttft_p99_ms`, which means one slow request on the FIRST point could bracket
-    immediately and report the server as too slow for the SLA.
+    immediately and report the server as too slow for the SLO.
     """
 
     def test_the_floor_lifts_the_cheap_concurrency_stages(self):
@@ -1261,7 +1261,7 @@ class TestPerPointRequestFloor:
 
 
 class TestTpotIsDecodeOnly:
-    """The SLA's TPOT is the decode-only per-token time, not guidellm's name for it.
+    """The SLO's TPOT is the decode-only per-token time, not guidellm's name for it.
 
     guidellm reports two per-output-token latencies and its naming is the reverse
     of the industry's: `inter_token_latency_ms` is (last_token - first_token) /
@@ -1306,7 +1306,7 @@ class TestTpotIsDecodeOnly:
         # 5 ms budget, the includes-TTFT reading of 6.1 ms is not, and it was the
         # one deciding capacity.
         m = _normalize(self._report(itl=4.5, tpot_incl_ttft=6.1), knob=4.0, index=0)
-        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=5.0)) is True
+        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=5.0)) is True
 
     def test_a_non_incremental_response_falls_back_instead_of_failing(self):
         # A server that answers in ONE chunk (whole output at once, common at low
@@ -1317,18 +1317,18 @@ class TestTpotIsDecodeOnly:
         # that batches its stream.
         m = _normalize(self._report(itl=0.0, tpot_incl_ttft=4.7), knob=4.0, index=0)
         assert m.tpot_ms == 4.7
-        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=5.0)) is True
-        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=4.0)) is False
+        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=5.0)) is True
+        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=4.0)) is False
 
     def test_neither_basis_measured_still_fails_closed(self):
         m = _normalize(self._report(itl=0.0, tpot_incl_ttft=0.0), knob=4.0, index=0)
-        assert _passes_sla(m, sla_cfg(sla_avg_tpot_ms=5.0)) is False
+        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=5.0)) is False
 
     def test_an_unset_threshold_is_still_ignored(self):
         # The fail-closed rule applies to SET thresholds only: a zero-valued metric
         # nobody asked about must not fail the point.
         m = _normalize(self._report(itl=0.0, tpot_incl_ttft=0.0), knob=4.0, index=0)
-        assert _passes_sla(m, sla_cfg(sla_avg_ttft_ms=500.0)) is True
+        assert _passes_slo(m, slo_cfg(slo_avg_ttft_ms=500.0)) is True
 
 
 class TestTheCapDoesNotOutrankAMeasurement:

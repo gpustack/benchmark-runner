@@ -9,7 +9,7 @@ What it adds
 ------------
 - A streamlined `benchmark-runner` CLI focused on benchmark and config commands.
 - An **adaptive auto-tune ramp** (`--auto-tune`): probes one deterministic answer —
-  peak throughput, or the maximum load meeting a latency SLA — instead of asking
+  peak throughput, or the maximum load meeting a latency SLO — instead of asking
   you to guess a load value. See "Auto-tune" below.
 - **Manual stages** (`--stages`): one single-strategy run per stage, each with its
   own request/duration limits.
@@ -58,13 +58,13 @@ deterministic answer. It runs one single-strategy GuideLLM benchmark per measure
 point and reads the metrics back to choose the next one:
 
 - **Phase 1** — geometric bracket: double the knob until throughput stops climbing
-  (or the SLA breaks, or the server overloads).
-- **Phase 2** — for an SLA target, bisect the pass/fail bracket for the maximum knob
-  still within SLA; for a throughput target, run a unimodal (ternary/golden hybrid)
+  (or the SLO breaks, or the server overloads).
+- **Phase 2** — for an SLO target, bisect the pass/fail bracket for the maximum knob
+  still within SLO; for a throughput target, run a unimodal (ternary/golden hybrid)
   search inside the bracket for the throughput argmax.
 
-The **target is derived**, not configured: set any `--sla-*` threshold and the
-answer becomes "the maximum load meeting that SLA"; set none and it becomes "peak
+The **target is derived**, not configured: set any `--slo-*` threshold and the
+answer becomes "the maximum load meeting that SLO"; set none and it becomes "peak
 throughput".
 
 `--axis` picks the load axis, which decides what the knob means:
@@ -88,13 +88,13 @@ benchmark-runner benchmark run \
 benchmark-runner benchmark run \
   --target http://localhost:8000 \
   --auto-tune --axis concurrency \
-  --sla-avg-ttft-ms 500 --sla-p95-tpot-ms 50 \
+  --slo-avg-ttft-ms 500 --slo-p95-tpot-ms 50 \
   --data "prompt_tokens=128,output_tokens=128" \
   --processor PROCESSOR_PATH
 ```
 
-**SLA thresholds** — 3 metrics x 3 aggregations = 9 optional `<=` targets, all in
-milliseconds: `--sla-{avg,p95,p99}-{ttft,tpot,latency}-ms`. Any subset may be set; a
+**SLO thresholds** — 3 metrics x 3 aggregations = 9 optional `<=` targets, all in
+milliseconds: `--slo-{avg,p95,p99}-{ttft,tpot,latency}-ms`. Any subset may be set; a
 point passes when **every** set threshold holds (AND) and its success rate is
 >= 95%. (GuideLLM reports end-to-end latency in seconds; it is converted
 internally so every threshold is in ms.)
@@ -157,22 +157,22 @@ than one logs which entries it ignored rather than quietly emitting only the fir
   "stopped_at": 256.0,
   "points_measured": 7, "max_points": 12,
   "elapsed_seconds": 54.32, "max_total_seconds": 3600.0,
-  "sla_bracket": [256.0, null],
+  "slo_bracket": [256.0, null],
   "probe_ceiling": null
 }
 ```
 
-`bracket_reason` is why the geometric bracket ended — which of the SLA, the server's
+`bracket_reason` is why the geometric bracket ended — which of the SLO, the server's
 capacity, your search range, or the budget bounded the answer. `stop_reason` is why
 the ramp as a whole ended, Phase 2 included; the two differ whenever a bracket found
 its answer and the following search then converged normally. One of
-`sla_failed` · `capacity_plateau` · `overloaded` · `upper_bound` · `budget_points` ·
+`slo_failed` · `capacity_plateau` · `overloaded` · `upper_bound` · `budget_points` ·
 `budget_seconds` · `converged` · `point_failed`.
 
 This is reported rather than left to be inferred from the measured curve because
 several terminations leave an **identical** curve behind: a run ended by
 `--max-total-seconds` looks exactly like one that stopped of its own accord to
-anybody counting points, and a `capacity_plateau` stop under a loose SLA looks
+anybody counting points, and a `capacity_plateau` stop under a loose SLO looks
 exactly like a threshold breaking at the top — with opposite advice attached in both
 cases. The file appears when the ramp returns, so its absence means "still running,
 or not a ramp at all"; a write failure is logged and does not fail the run.
@@ -256,7 +256,7 @@ converged or ran out of budget.
 `--disable-console` silences the report along with everything else, so a headless
 run (gpustack drives the runner this way) is unaffected.
 
-**Verdicts match the web report.** `◆ recommended` is `min(sla_met, peak)` and
+**Verdicts match the web report.** `◆ recommended` is `min(slo_met, peak)` and
 `✕ overloaded` means a failure rate over 5% *or* a point past the peak delivering
 under 95% of it — the same rules the GPUStack UI badges each stage with. A point
 one step past the knee at ~peak throughput is deliberately NOT overload; it is

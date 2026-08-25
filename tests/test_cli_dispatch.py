@@ -289,7 +289,7 @@ def _fake_outcome(cfg, **facts):
         max_points=cfg.max_points,
         max_total_seconds=cfg.max_total_seconds,
         elapsed_seconds=54.321,
-        sla_bracket=(256.0, None),
+        slo_bracket=(256.0, None),
     )
     base.update(facts)
     return RampOutcome(**base)
@@ -322,8 +322,8 @@ def test_ramp_outcome_is_written_beside_the_point_files(monkeypatch, tmp_path):
     assert facts["bracket_reason"] == "capacity_plateau"
     assert facts["stop_reason"] == "converged"
     assert facts["stopped_at"] == 256.0
-    assert facts["sla_bracket"] == [256.0, None]
-    assert facts["version"] == 2
+    assert facts["slo_bracket"] == [256.0, None]
+    assert facts["version"] == 3
     # v2 carries the measured grid inline, which is what `benchmark-runner chart`
     # redraws from. Without it the sidecar says only why the search stopped, and
     # rebuilding the curve means globbing and re-parsing the point reports.

@@ -76,8 +76,8 @@ CURVE = [
 class TestVerdictsMatchTheWebReport:
     """Ports of gpustack-ui's ``getStageStatus`` (ui.tsx) and ``compute_best_points``."""
 
-    def _status(self, point, sla=None, points=None):
-        best = best_points(points or CURVE, sla)
+    def _status(self, point, slo=None, points=None):
+        best = best_points(points or CURVE, slo)
         return point_status(
             point,
             recommended_knob=best["recommended_knob"],
@@ -85,11 +85,11 @@ class TestVerdictsMatchTheWebReport:
             peak_tps=best["peak_tps"],
         )
 
-    def test_the_recommended_point_is_the_throughput_peak_without_an_sla(self):
+    def test_the_recommended_point_is_the_throughput_peak_without_an_slo(self):
         assert best_points(CURVE, None)["recommended_knob"] == 30.0
 
-    def test_an_sla_caps_the_recommendation_but_never_lifts_it(self):
-        # min(sla_met, peak): an SLA met only below the peak binds...
+    def test_an_slo_caps_the_recommendation_but_never_lifts_it(self):
+        # min(slo_met, peak): an SLO met only below the peak binds...
         assert best_points(CURVE, 16.0)["recommended_knob"] == 16.0
         # ...and one still met AT/above the peak does not push past it, because
         # past the peak more load buys no more throughput.
@@ -122,12 +122,12 @@ class TestVerdictsMatchTheWebReport:
         points = [straggler, *CURVE]
         assert self._status(straggler, points=points) == STATUS_OK
 
-    def test_the_peak_keeps_its_own_badge_when_the_sla_caps_the_answer(self):
-        # SLA met only at 16 -> 16 is recommended and 30 is still flagged as the
+    def test_the_peak_keeps_its_own_badge_when_the_slo_caps_the_answer(self):
+        # SLO met only at 16 -> 16 is recommended and 30 is still flagged as the
         # peak, which is what makes "you are leaving throughput on the table"
         # readable off the table alone.
-        assert self._status(CURVE[3], sla=16.0) == STATUS_PEAK
-        assert self._status(CURVE[2], sla=16.0) == STATUS_RECOMMENDED
+        assert self._status(CURVE[3], slo=16.0) == STATUS_PEAK
+        assert self._status(CURVE[2], slo=16.0) == STATUS_RECOMMENDED
 
 
 class TestTheGridStaysRectangular:
@@ -195,32 +195,32 @@ class TestWhatEachModeShows:
         assert render_curve_report([], mode=CHART_AUTO, style=UNICODE) == []
 
 
-class TestTheSlaTargetIsReportedAsABoundary:
+class TestTheSloTargetIsReportedAsABoundary:
     def test_a_bracketed_boundary_names_both_ends(self):
         text = "\n".join(
             render_curve_report(
                 CURVE,
-                target="sla",
-                sla_met_knob=16.0,
-                sla_first_fail_knob=30.0,
-                sla_thresholds={"sla_p99_ttft_ms": 100.0},
+                target="slo",
+                slo_met_knob=16.0,
+                slo_first_fail_knob=30.0,
+                slo_thresholds={"slo_p99_ttft_ms": 100.0},
                 mode=CHART_AUTO,
                 style=UNICODE,
             )
         )
-        assert "SLA boundary bracketed at (16, 30)" in text
+        assert "SLO boundary bracketed at (16, 30)" in text
         # The throughput left on the table is the other half of the answer.
         assert "throughput peaks higher, at 30 req/s" in text
 
-    def test_an_unbroken_sla_is_reported_as_a_floor_not_an_edge(self):
+    def test_an_unbroken_slo_is_reported_as_a_floor_not_an_edge(self):
         # first_fail=None means no point ever breached it, so the number is "at
         # least this much", and reading it as the boundary is exactly wrong.
         text = "\n".join(
             render_curve_report(
                 CURVE,
-                target="sla",
-                sla_met_knob=64.0,
-                sla_first_fail_knob=None,
+                target="slo",
+                slo_met_knob=64.0,
+                slo_first_fail_knob=None,
                 mode=CHART_AUTO,
                 style=UNICODE,
             )
@@ -231,14 +231,14 @@ class TestTheSlaTargetIsReportedAsABoundary:
         text = "\n".join(
             render_curve_report(
                 CURVE,
-                target="sla",
-                sla_met_knob=16.0,
-                sla_thresholds={"sla_p99_ttft_ms": 500.0},
+                target="slo",
+                slo_met_knob=16.0,
+                slo_thresholds={"slo_p99_ttft_ms": 500.0},
                 mode=CHART_AUTO,
                 style=UNICODE,
             )
         )
-        assert "SLA 500ms" in text
+        assert "SLO 500ms" in text
 
 
 class TestAStageLadderClaimsLessThanARamp:
@@ -425,16 +425,16 @@ class TestStyleDetection:
 class TestTheChartSubcommand:
     def _sidecar(self, tmp_path, name="42__ramp.json", **overrides):
         payload = {
-            "version": 2,
+            "version": 3,
             "points": CURVE,
             "axis": "rate",
             "target": "saturation",
             "stop_reason": "converged",
             "bracket_reason": "capacity_plateau",
-            "sla_bracket": None,
+            "slo_bracket": None,
             "elapsed_seconds": 351.0,
             "probe_ceiling": None,
-            "sla_thresholds": {},
+            "slo_thresholds": {},
         }
         payload.update(overrides)
         path = tmp_path / name

@@ -234,14 +234,14 @@ def point_status(
 
 def best_points(
     points: Sequence[dict],
-    sla_met_knob: Optional[float],
+    slo_met_knob: Optional[float],
     target: str = "saturation",
 ) -> dict:
     """Peak / recommended knobs, using gpustack's ``compute_best_points`` rule.
 
-    ``recommended = min(sla_met_knob, peak)`` when an SLA was set, else the peak.
+    ``recommended = min(slo_met_knob, peak)`` when an SLO was set, else the peak.
     Capped AT the peak rather than below it: up to the peak more load buys more
-    throughput, so an SLA that still holds there makes the peak the answer.
+    throughput, so an SLO that still holds there makes the peak the answer.
 
     ``target="stages"`` yields NO recommendation. A ladder is a list of rungs the
     user chose, so its argmax is "the best of what you measured", not "the load to
@@ -256,8 +256,8 @@ def best_points(
     peak_tps = _num(peak, "output_tps")
     if target == "stages":
         recommended = None
-    elif sla_met_knob is not None:
-        recommended = min(float(sla_met_knob), peak_knob)
+    elif slo_met_knob is not None:
+        recommended = min(float(slo_met_knob), peak_knob)
     else:
         recommended = peak_knob
     return {
@@ -381,7 +381,7 @@ def _panel(  # noqa: C901 - one grid, drawn once; splitting it only moves state
 ) -> list[str]:
     """Render one chart panel: title, y-labelled grid, no x axis (the caller adds it).
 
-    ``rules`` are horizontal reference lines (value, label) — used for SLA
+    ``rules`` are horizontal reference lines (value, label) — used for SLO
     thresholds, which are the one thing on the latency chart that is a target
     rather than a measurement.
     """
@@ -547,9 +547,9 @@ def render_curve_report(
     target: str = "saturation",
     stop_reason: str = "",
     bracket_reason: str = "",
-    sla_met_knob: Optional[float] = None,
-    sla_first_fail_knob: Optional[float] = None,
-    sla_thresholds: Optional[dict] = None,
+    slo_met_knob: Optional[float] = None,
+    slo_first_fail_knob: Optional[float] = None,
+    slo_thresholds: Optional[dict] = None,
     elapsed_seconds: Optional[float] = None,
     probe_ceiling: Optional[float] = None,
     mode: str = CHART_AUTO,
@@ -565,7 +565,7 @@ def render_curve_report(
         return []
     style = style or detect_style()
     ordered = sorted(points, key=lambda p: _num(p, "knob"))
-    best = best_points(ordered, sla_met_knob, target)
+    best = best_points(ordered, slo_met_knob, target)
     statuses = [
         point_status(
             p,
@@ -594,7 +594,7 @@ def render_curve_report(
 
     charts = mode != CHART_NONE and len(ordered) > 1
     if charts:
-        out += _headline_charts(ordered, statuses, axis, sla_thresholds, style)
+        out += _headline_charts(ordered, statuses, axis, slo_thresholds, style)
         if mode == CHART_ALL:
             out += _secondary_charts(ordered, statuses, axis, style)
         out.append("")
@@ -620,9 +620,9 @@ def render_curve_report(
         target=target,
         stop_reason=stop_reason,
         bracket_reason=bracket_reason,
-        sla_met_knob=sla_met_knob,
-        sla_first_fail_knob=sla_first_fail_knob,
-        sla_thresholds=sla_thresholds,
+        slo_met_knob=slo_met_knob,
+        slo_first_fail_knob=slo_first_fail_knob,
+        slo_thresholds=slo_thresholds,
         probe_ceiling=probe_ceiling,
         style=style,
     )
@@ -634,7 +634,7 @@ def _headline_charts(
     points: Sequence[dict],
     statuses: Sequence[str],
     axis: str,
-    sla_thresholds: Optional[dict],
+    slo_thresholds: Optional[dict],
     style: Style,
 ) -> list[str]:
     """Throughput over load, with the latency that buys it directly underneath.
@@ -664,16 +664,16 @@ def _headline_charts(
     ttft = [_num(p, "ttft_p99_ms") or _num(p, "ttft_ms") for p in points]
     rules: list[tuple[float, str]] = []
     for key, label in (
-        ("sla_p99_ttft_ms", "p99"),
-        ("sla_p95_ttft_ms", "p95"),
-        ("sla_avg_ttft_ms", "avg"),
+        ("slo_p99_ttft_ms", "p99"),
+        ("slo_p95_ttft_ms", "p95"),
+        ("slo_avg_ttft_ms", "avg"),
     ):
-        value = (sla_thresholds or {}).get(key)
+        value = (slo_thresholds or {}).get(key)
         if value:
             rules.append((float(value), label))
             break
     dot = style.text["dot"]
-    title = "TTFT p99 (log)" + (f"  {dot} SLA {_fmt_ms(rules[0][0])}" if rules else "")
+    title = "TTFT p99 (log)" + (f"  {dot} SLO {_fmt_ms(rules[0][0])}" if rules else "")
     values, marks, at, dropped = _measured_only(ttft, statuses, cols)
     if dropped:
         title += (
@@ -827,9 +827,9 @@ def _verdict(  # noqa: C901 - one sentence per mode; a dispatch table hides the 
     target: str,
     stop_reason: str,
     bracket_reason: str,
-    sla_met_knob: Optional[float],
-    sla_first_fail_knob: Optional[float],
-    sla_thresholds: Optional[dict],
+    slo_met_knob: Optional[float],
+    slo_first_fail_knob: Optional[float],
+    slo_thresholds: Optional[dict],
     probe_ceiling: Optional[float],
     style: Style,
 ) -> list[str]:
@@ -868,21 +868,21 @@ def _verdict(  # noqa: C901 - one sentence per mode; a dispatch table hides the 
         f" {sep} {_num(chosen, 'success') * 100:.0f}% ok"
     )
 
-    if target == "sla":
-        if sla_met_knob is None:
+    if target == "slo":
+        if slo_met_knob is None:
             note = (
-                f"SLA met by no measured point {dash} every point breached a threshold"
+                f"SLO met by no measured point {dash} every point breached a threshold"
             )
-        elif sla_first_fail_knob is None:
+        elif slo_first_fail_knob is None:
             note = (
-                f"SLA still met at the top of the sweep {dash} {knob} {unit} is a "
+                f"SLO still met at the top of the sweep {dash} {knob} {unit} is a "
                 "FLOOR, "
                 "not the boundary"
             )
         else:
             note = (
-                f"SLA boundary bracketed at ({_fmt_knob(float(sla_met_knob))}, "
-                f"{_fmt_knob(float(sla_first_fail_knob))}) {unit}"
+                f"SLO boundary bracketed at ({_fmt_knob(float(slo_met_knob))}, "
+                f"{_fmt_knob(float(slo_first_fail_knob))}) {unit}"
             )
         out.append(f"    {style.paint(note, 'dim')}")
         if best["peak_knob"] is not None and best["peak_knob"] != _num(chosen, "knob"):
@@ -890,7 +890,7 @@ def _verdict(  # noqa: C901 - one sentence per mode; a dispatch table hides the 
                 "    "
                 + style.paint(
                     f"throughput peaks higher, at {_fmt_knob(best['peak_knob'])} {unit} "
-                    f"({best['peak_tps']:,.0f} tok/s) {dash} capped here by the SLA",
+                    f"({best['peak_tps']:,.0f} tok/s) {dash} capped here by the SLO",
                     "dim",
                 )
             )

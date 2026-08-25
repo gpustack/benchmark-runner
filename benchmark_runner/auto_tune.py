@@ -2,7 +2,7 @@
 Adaptive ramp auto-tune engine.
 
 A benchmark task = automatically probe ONE deterministic answer (peak throughput
-OR the SLA-capacity boundary) instead of asking the user to guess a load value.
+OR the SLO-capacity boundary) instead of asking the user to guess a load value.
 The engine orchestrates repeated single-strategy guidellm runs (each one knob
 point) and reads the metrics back to decide the next point:
 
@@ -10,9 +10,9 @@ point) and reads the metrics back to decide the next point:
                                   to the bound in force — the search range
                                   [lower_bound, upper_bound] is HARD at both ends)
     Phase 2  depends on the target, because the two answers have different shapes:
-             * SLA        — the pass/fail predicate is MONOTONE in the knob, so
+             * SLO        — the pass/fail predicate is MONOTONE in the knob, so
                             bisect the (last_pass, first_fail) bracket for the
-                            largest knob still inside SLA.
+                            largest knob still inside SLO.
              * saturation — throughput is UNIMODAL, not monotone, so bisection has
                             nothing to bisect on. Run a three-point (ternary /
                             golden-section hybrid) search over Phase 1's
@@ -66,14 +66,14 @@ DEFAULT_RATE_MAX_CONCURRENCY = DEFAULT_MAX_CONCURRENCY
 # reader cannot tell them apart afterwards.
 #
 # Two concrete cases that motivated reporting it:
-#   * SLA target, thresholds never breached. `capacity_plateau` (we stopped
-#     because throughput flattened) and `sla_failed`-at-the-top look the same in
-#     rate space — both end with "the highest knob measured met the SLA".
+#   * SLO target, thresholds never breached. `capacity_plateau` (we stopped
+#     because throughput flattened) and `slo_failed`-at-the-top look the same in
+#     rate space — both end with "the highest knob measured met the SLO".
 #   * `budget_seconds` vs `budget_points`. A consumer counting points can only see
 #     the second one; a run cut short by the time cap looks exactly like a run
 #     that stopped of its own accord, and the advice for the two is different
 #     (raise the duration cap vs. nothing to fix).
-STOP_SLA_FAILED = "sla_failed"  # a point breached the SLA -> bracket found
+STOP_SLO_FAILED = "slo_failed"  # a point breached the SLO -> bracket found
 STOP_CAPACITY_PLATEAU = "capacity_plateau"  # throughput stopped climbing
 STOP_OVERLOADED = "overloaded"  # success rate fell under the floor
 STOP_UPPER_BOUND = "upper_bound"  # reached the top of the search range
@@ -97,7 +97,20 @@ STOP_POINT_FAILED = "point_failed"  # a point produced no benchmark
 # curve and the reason it stopped, and reassembling that from a directory of
 # reports means reimplementing the manager's glob + schema in the CLI. Additive
 # and read via ``.get()`` downstream, so an older consumer is unaffected.
-RAMP_OUTCOME_VERSION = 2
+#
+# v3 renamed the latency-target fields SLA -> SLO (``slo_bracket``,
+# ``slo_thresholds``, and the ``slo_failed`` stop reason). NOT additive: a v2 file
+# spells them ``sla_*``, so a reader that only knows v3 finds no thresholds there
+# and draws the curve without its budget lines. The version is what lets it tell
+# that apart from "this run had no thresholds", which is the same empty dict.
+RAMP_OUTCOME_VERSION = 3
+
+# The version that first carried ``points``. Named separately from the current
+# version because it is the floor a chartable sidecar has to clear, and the two
+# stopped being the same number at v3 — telling a user with a v2 file that inline
+# points "need version 3" would send them re-running a ramp whose sidecar was
+# already chartable.
+RAMP_OUTCOME_POINTS_VERSION = 2
 
 # ── Saturation probe sizing ───────────────────────────────────────────────────
 # The probe answers one question: roughly how many requests per second can this
@@ -148,7 +161,7 @@ class PointMetrics:
     """Normalized metrics for one measured knob point.
 
     All latency-family fields are stored in MILLISECONDS so they compare directly
-    to the ms-denominated SLA thresholds. TTFT/TPOT are already ms in guidellm;
+    to the ms-denominated SLO thresholds. TTFT/TPOT are already ms in guidellm;
     request latency is SECONDS in guidellm and is converted to ms here (x1000).
     """
 
@@ -161,7 +174,7 @@ class PointMetrics:
     # TPOT = DECODE-ONLY time per output token, which guidellm files under
     # `inter_token_latency_ms`: (last_token - first_token) / (output_tokens - 1).
     # That is the industry's TPOT (vLLM, genai-perf) and what the server's
-    # SLA_THRESHOLDS evaluates, so the bracketing here and the stored verdict
+    # SLO_THRESHOLDS evaluates, so the bracketing here and the stored verdict
     # agree. guidellm's `time_per_output_token_ms` divides by output_tokens from
     # request_start instead, folding TTFT into the decode average — it used to
     # feed these three fields, which made a TPOT threshold tighten with queueing
@@ -186,9 +199,9 @@ class PointMetrics:
 class AutoTuneConfig:
     """Ramp engine inputs (all supplied via CLI).
 
-    SLA is a set of up to 9 OPTIONAL "<=" latency thresholds (all in ms): avg + p95
+    SLO is a set of up to 9 OPTIONAL "<=" latency thresholds (all in ms): avg + p95
     + p99 of TTFT, TPOT, and end-to-end latency. Any subset may be set; the target
-    becomes "sla" iff at least one is set, and a point passes iff every SET
+    becomes "slo" iff at least one is set, and a point passes iff every SET
     threshold holds.
     """
 
@@ -204,7 +217,7 @@ class AutoTuneConfig:
     # good as the samples above it: with n samples, p99 has n/100 above it, so at
     # n=30 (or 40) p99 IS the maximum — one outlier defines the tail. On the
     # concurrency axis `knob * 10` puts every knob under 10 in that regime, which is
-    # exactly where a p95/p99 SLA threshold can end a run on its first point.
+    # exactly where a p95/p99 SLO threshold can end a run on its first point.
     #
     # 100 does not make p99 trustworthy (it makes it the second-largest sample —
     # ~1000 is needed for a real tail estimate). It removes the degenerate
@@ -216,16 +229,16 @@ class AutoTuneConfig:
     # aggregate), so it does not spend this budget — only wall clock.
     max_points: int = 12
     max_total_seconds: float = 3600.0  # 1h; kept in sync with the CLI default
-    # SLA thresholds (all optional, all in ms, all "<=" comparisons).
-    sla_avg_ttft_ms: Optional[float] = None
-    sla_p95_ttft_ms: Optional[float] = None
-    sla_p99_ttft_ms: Optional[float] = None
-    sla_avg_tpot_ms: Optional[float] = None
-    sla_p95_tpot_ms: Optional[float] = None
-    sla_p99_tpot_ms: Optional[float] = None
-    sla_avg_latency_ms: Optional[float] = None
-    sla_p95_latency_ms: Optional[float] = None
-    sla_p99_latency_ms: Optional[float] = None
+    # SLO thresholds (all optional, all in ms, all "<=" comparisons).
+    slo_avg_ttft_ms: Optional[float] = None
+    slo_p95_ttft_ms: Optional[float] = None
+    slo_p99_ttft_ms: Optional[float] = None
+    slo_avg_tpot_ms: Optional[float] = None
+    slo_p95_tpot_ms: Optional[float] = None
+    slo_p99_tpot_ms: Optional[float] = None
+    slo_avg_latency_ms: Optional[float] = None
+    slo_p95_latency_ms: Optional[float] = None
+    slo_p99_latency_ms: Optional[float] = None
     random_seed_base: int = 42
     # True: each point's seed = base + index (points differ, spreading prefix/KV
     # cache reuse). False: every point uses the base seed.
@@ -245,36 +258,36 @@ class AutoTuneConfig:
         # concurrency: requests-per-slot; rate: seconds of test time.
         return 10.0 if self.axis == "concurrency" else 30.0
 
-    def sla_pairs(self, m: PointMetrics) -> list[tuple[Optional[float], float]]:
-        """(threshold, metric_value) pairs for the 9 SLA dimensions.
+    def slo_pairs(self, m: PointMetrics) -> list[tuple[Optional[float], float]]:
+        """(threshold, metric_value) pairs for the 9 SLO dimensions.
 
         Threshold is None when unset (ignored by the pass predicate). All values
         are in ms, aligned with the thresholds.
         """
         return [
-            (self.sla_avg_ttft_ms, m.ttft_ms),
-            (self.sla_p95_ttft_ms, m.ttft_p95_ms),
-            (self.sla_p99_ttft_ms, m.ttft_p99_ms),
-            (self.sla_avg_tpot_ms, m.tpot_ms),
-            (self.sla_p95_tpot_ms, m.tpot_p95_ms),
-            (self.sla_p99_tpot_ms, m.tpot_p99_ms),
-            (self.sla_avg_latency_ms, m.latency_ms),
-            (self.sla_p95_latency_ms, m.latency_p95_ms),
-            (self.sla_p99_latency_ms, m.latency_p99_ms),
+            (self.slo_avg_ttft_ms, m.ttft_ms),
+            (self.slo_p95_ttft_ms, m.ttft_p95_ms),
+            (self.slo_p99_ttft_ms, m.ttft_p99_ms),
+            (self.slo_avg_tpot_ms, m.tpot_ms),
+            (self.slo_p95_tpot_ms, m.tpot_p95_ms),
+            (self.slo_p99_tpot_ms, m.tpot_p99_ms),
+            (self.slo_avg_latency_ms, m.latency_ms),
+            (self.slo_p95_latency_ms, m.latency_p95_ms),
+            (self.slo_p99_latency_ms, m.latency_p99_ms),
         ]
 
     def set_thresholds(self) -> dict[str, float]:
-        """The SLA thresholds actually SET, by field name (unset ones dropped)."""
+        """The SLO thresholds actually SET, by field name (unset ones dropped)."""
         names = (
-            "sla_avg_ttft_ms",
-            "sla_p95_ttft_ms",
-            "sla_p99_ttft_ms",
-            "sla_avg_tpot_ms",
-            "sla_p95_tpot_ms",
-            "sla_p99_tpot_ms",
-            "sla_avg_latency_ms",
-            "sla_p95_latency_ms",
-            "sla_p99_latency_ms",
+            "slo_avg_ttft_ms",
+            "slo_p95_ttft_ms",
+            "slo_p99_ttft_ms",
+            "slo_avg_tpot_ms",
+            "slo_p95_tpot_ms",
+            "slo_p99_tpot_ms",
+            "slo_avg_latency_ms",
+            "slo_p95_latency_ms",
+            "slo_p99_latency_ms",
         )
         return {
             name: float(getattr(self, name))
@@ -284,8 +297,8 @@ class AutoTuneConfig:
 
     @property
     def target(self) -> str:
-        """ "sla" if ANY of the 9 SLA thresholds is set, else "saturation"."""
-        return "sla" if self.set_thresholds() else "saturation"
+        """ "slo" if ANY of the 9 SLO thresholds is set, else "saturation"."""
+        return "slo" if self.set_thresholds() else "saturation"
 
 
 @dataclass
@@ -295,7 +308,7 @@ class RampOutcome:
     Two reasons, not one, because they answer different questions:
 
     * ``bracket_reason`` — why the geometric bracket (Phase 1) ended. This is the
-      one that says whether the SLA, the server's capacity, or the user's own
+      one that says whether the SLO, the server's capacity, or the user's own
       search range bounded the answer.
     * ``stop_reason`` — why the ramp as a whole ended, Phase 2 included. Equal to
       ``bracket_reason`` when Phase 2 never ran.
@@ -320,8 +333,8 @@ class RampOutcome:
     max_total_seconds: float
     elapsed_seconds: float
     # (last_pass, first_fail) — first_fail is None when no point ever breached the
-    # SLA, i.e. no boundary was located and the SLA number is a floor, not an edge.
-    sla_bracket: Optional[tuple[Optional[float], Optional[float]]] = None
+    # SLO, i.e. no boundary was located and the SLO number is a floor, not an edge.
+    slo_bracket: Optional[tuple[Optional[float], Optional[float]]] = None
     # Ceiling rps measured by the saturation probe (rate axis + saturation target),
     # None when no probe ran.
     probe_ceiling: Optional[float] = None
@@ -340,12 +353,12 @@ class RampOutcome:
     # would then have to stay in sync with this file forever.
     probe_relaxed: int = 0
     probe_bound: Optional[float] = None
-    # The SET SLA thresholds (ms), by CLI field name. Carried so a reader holding
-    # only this file can say what the run was judged AGAINST — `sla_bracket` gives
+    # The SET SLO thresholds (ms), by CLI field name. Carried so a reader holding
+    # only this file can say what the run was judged AGAINST — `slo_bracket` gives
     # the boundary but not the threshold that drew it, and a chart with no
     # threshold line cannot show how much headroom the chosen point had. None
     # entries are dropped, so an empty dict means "saturation target".
-    sla_thresholds: Optional[dict[str, float]] = None
+    slo_thresholds: Optional[dict[str, float]] = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable facts, including the measured grid (see the version note)."""
@@ -363,13 +376,13 @@ class RampOutcome:
             "max_points": self.max_points,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "max_total_seconds": self.max_total_seconds,
-            "sla_bracket": (
-                list(self.sla_bracket) if self.sla_bracket is not None else None
+            "slo_bracket": (
+                list(self.slo_bracket) if self.slo_bracket is not None else None
             ),
             "probe_ceiling": self.probe_ceiling,
             "probe_relaxed": self.probe_relaxed,
             "probe_bound": self.probe_bound,
-            "sla_thresholds": self.sla_thresholds or {},
+            "slo_thresholds": self.slo_thresholds or {},
         }
 
 
@@ -386,7 +399,7 @@ def _mean(node: Any, *path: str) -> float:
 def _normalize(benchmark: Any, knob: float, index: int) -> PointMetrics:
     """Map a guidellm ``benchmarks[0]`` result to our flat PointMetrics.
 
-    Note: ``request_latency`` is in SECONDS in guidellm; the SLA thresholds are in
+    Note: ``request_latency`` is in SECONDS in guidellm; the SLO thresholds are in
     ms, so its mean/p99 are multiplied by 1000 here. TTFT/TPOT are already ms.
     """
     m = benchmark.metrics
@@ -420,7 +433,7 @@ def _normalize(benchmark: Any, knob: float, index: int) -> PointMetrics:
             _mean(m, "inter_token_latency_ms", "successful", "percentiles", "p99")
             or _mean(m, "time_per_output_token_ms", "successful", "percentiles", "p99")
         ),
-        # request_latency is seconds -> convert to ms to match the SLA thresholds.
+        # request_latency is seconds -> convert to ms to match the SLO thresholds.
         latency_ms=_mean(m, "request_latency", "successful", "mean") * 1000.0,
         latency_p95_ms=_mean(m, "request_latency", "successful", "percentiles", "p95")
         * 1000.0,
@@ -431,15 +444,15 @@ def _normalize(benchmark: Any, knob: float, index: int) -> PointMetrics:
     )
 
 
-def _passes_sla(m: PointMetrics, cfg: AutoTuneConfig) -> bool:
-    """SLA-pass = success>=95% AND every SET threshold holds (<=).
+def _passes_slo(m: PointMetrics, cfg: AutoTuneConfig) -> bool:
+    """SLO-pass = success>=95% AND every SET threshold holds (<=).
 
     AND is taken over SET thresholds only; unset (None) thresholds are ignored.
     Up to 9 dimensions: avg+p95+p99 of TTFT, TPOT, and end-to-end latency (all ms).
     """
     if m.success < SUCCESS_FLOOR:
         return False
-    for threshold, value in cfg.sla_pairs(m):
+    for threshold, value in cfg.slo_pairs(m):
         if threshold is None:
             continue
         # A non-positive value means the metric was not measured, not that it took
@@ -447,7 +460,7 @@ def _passes_sla(m: PointMetrics, cfg: AutoTuneConfig) -> bool:
         # the decode-only TPOT is genuinely undefined when requests emit a single
         # token (no second token to time), which guidellm reports as 0.0. Waiving
         # the threshold there would let a max_tokens=1 run pass every point and
-        # ramp to the upper bound. Failing instead surfaces it as sla_never_met.
+        # ramp to the upper bound. Failing instead surfaces it as slo_never_met.
         if value <= 0 or value > threshold:
             return False
     return True
@@ -473,10 +486,10 @@ def _capacity_saturated(
       so an absolute floor false-trips on the very first, unsaturated point.
 
     Both targets use this, for different reasons. For the saturation target it IS
-    the stop criterion (the peak is here). For the SLA target it is a SECONDARY
-    stop: the SLA may still hold far past this point, but past saturation more load
+    the stop criterion (the peak is here). For the SLO target it is a SECONDARY
+    stop: the SLO may still hold far past this point, but past saturation more load
     buys no more work — only queueing — so a "capacity" answer taken from up there
-    is a load nobody would ever choose to run at. See the Phase-1 SLA branch.
+    is a load nobody would ever choose to run at. See the Phase-1 SLO branch.
     """
     cant_keepup = (
         axis == "rate"
@@ -512,7 +525,7 @@ async def run_ramp(  # noqa: C901
     """
     Execute the adaptive ramp and return the measured points.
 
-    :param cfg: Ramp configuration (axis, bounds, budget, SLA).
+    :param cfg: Ramp configuration (axis, bounds, budget, SLO).
     :param base_kwargs: Common guidellm kwargs shared by every point (target, data,
         backend, processor, ...). Per-point profile/rate/seed/outputs/max_requests
         are layered on top for each run.
@@ -599,7 +612,7 @@ async def run_ramp(  # noqa: C901
 
     def _phase2_remaining(lo: float, hi: float) -> int:
         # Steps left to close the (lo, hi) bracket. Both Phase-2 searches shrink it
-        # by roughly half per point (SLA bisection exactly; the unimodal search by
+        # by roughly half per point (SLO bisection exactly; the unimodal search by
         # whichever side survives the local comparison), so log2 estimates both.
         return max(1, math.ceil(math.log2(max(2.0, hi - lo))))
 
@@ -770,26 +783,26 @@ async def run_ramp(  # noqa: C901
             break
         points.append(m)
 
-        if cfg.target == "sla":
-            if _passes_sla(m, cfg):
+        if cfg.target == "slo":
+            if _passes_slo(m, cfg):
                 last_pass = knob
-                # SECONDARY termination: the SLA still holds, but the server has
+                # SECONDARY termination: the SLO still holds, but the server has
                 # stopped converting more load into more delivered work. Without
-                # this the SLA branch has NO saturation criterion at all (only the
-                # 95% success floor inside _passes_sla), so a threshold set loosely
+                # this the SLO branch has NO saturation criterion at all (only the
+                # 95% success floor inside _passes_slo), so a threshold set loosely
                 # enough never to break lets the ramp double all the way to
                 # upper_bound through the saturated region — measuring points that
                 # deliver LESS throughput at an order of magnitude worse latency,
-                # and then reporting the top of the range as the "SLA capacity".
+                # and then reporting the top of the range as the "SLO capacity".
                 # Observed on a real run: throughput peaked at 256 streams
                 # (TTFT 142ms) yet the answer came back 1024 (TTFT 5809ms, 6% LESS
                 # throughput) because a 10s TTFT threshold was never violated.
                 #
-                # Deliberately NOT treated as an SLA failure: writing first_fail
+                # Deliberately NOT treated as an SLO failure: writing first_fail
                 # here would make Phase 2 bisect (last_pass, saturation_knob) and
                 # return a SATURATION point dressed up as a latency boundary. The
-                # honest statement is "the SLA never bound this sweep; capacity
-                # did", which the aggregation side reports as `sla_not_binding`
+                # honest statement is "the SLO never bound this sweep; capacity
+                # did", which the aggregation side reports as `slo_not_binding`
                 # (and takes the throughput peak as the operating point).
                 if _capacity_saturated(m, prev_tps, prev_achieved, cfg.axis):
                     bracket_reason = STOP_CAPACITY_PLATEAU
@@ -805,7 +818,7 @@ async def run_ramp(  # noqa: C901
                 knob = min(knob * 2, float(cfg.upper_bound))
             else:
                 first_fail = knob  # bracket = (last_pass, first_fail)
-                bracket_reason = STOP_SLA_FAILED
+                bracket_reason = STOP_SLO_FAILED
                 break
         else:  # saturation (peak throughput)
             # Here saturation IS the stop criterion (the peak is at it), so the
@@ -925,11 +938,11 @@ async def run_ramp(  # noqa: C901
     # also the ramp's.
     stop_reason = bracket_reason
 
-    # ── Phase 2: bisection on the SLA bracket (SLA target only) ─────────────
-    # Bisection is valid HERE and only here: "passes the SLA" is monotone in the
+    # ── Phase 2: bisection on the SLO bracket (SLO target only) ─────────────
+    # Bisection is valid HERE and only here: "passes the SLO" is monotone in the
     # knob, so a single pass/fail bracket collapses to the boundary. The saturation
     # target gets a different Phase 2 (below) because throughput is not monotone.
-    if cfg.target == "sla" and last_pass is not None and first_fail is not None:
+    if cfg.target == "slo" and last_pass is not None and first_fail is not None:
         lo, hi = last_pass, first_fail
         stop_reason = STOP_CONVERGED
         # The budget is consulted only AFTER a next point has been established, so
@@ -951,7 +964,7 @@ async def run_ramp(  # noqa: C901
                 stop_reason = STOP_POINT_FAILED
                 break
             points.append(m)
-            if _passes_sla(m, cfg):
+            if _passes_slo(m, cfg):
                 lo = float(mid)
                 last_pass = lo
             else:
@@ -990,7 +1003,7 @@ async def run_ramp(  # noqa: C901
             return m.output_tps
 
         stop_reason = STOP_CONVERGED
-        # Budget checked after a next point is established — see the SLA bisection
+        # Budget checked after a next point is established — see the SLO bisection
         # above for why the loop predicate is the wrong place for it. Here it matters
         # twice over, because this search can also run out of INTEGER GRID while the
         # bracket is still 2 wide, which is convergence and not a budget problem.
@@ -1056,13 +1069,13 @@ async def run_ramp(  # noqa: C901
         max_total_seconds=float(cfg.max_total_seconds),
         elapsed_seconds=_elapsed(),
         # Reported even when no boundary was found: first_fail=None is the fact
-        # that the SLA number is a floor ("still met at the top we reached"), not
+        # that the SLO number is a floor ("still met at the top we reached"), not
         # an edge ("breaks just above").
-        sla_bracket=((last_pass, first_fail) if cfg.target == "sla" else None),
+        slo_bracket=((last_pass, first_fail) if cfg.target == "slo" else None),
         probe_ceiling=probe_ceiling,
         probe_relaxed=probe_relaxed,
         probe_bound=saturation_bound,
-        sla_thresholds=cfg.set_thresholds(),
+        slo_thresholds=cfg.set_thresholds(),
     )
 
 

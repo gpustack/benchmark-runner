@@ -45,7 +45,7 @@ from benchmark_runner.sharegpt_adapter import prepare_datasets
 from guidellm.benchmark.entrypoints import benchmark_generative_text
 from benchmark_runner.progress import ServerBenchmarkerProgress
 from benchmark_runner.auto_tune import (
-    RAMP_OUTCOME_VERSION,
+    RAMP_OUTCOME_POINTS_VERSION,
     AutoTuneConfig,
     RampOutcome,
     run_ramp,
@@ -128,8 +128,8 @@ def _finish_stages(
         "stop_reason": "stages_completed",
         "bracket_reason": "",
         "points_measured": len(points),
-        "sla_bracket": None,
-        "sla_thresholds": {},
+        "slo_bracket": None,
+        "slo_thresholds": {},
         "elapsed_seconds": round(elapsed, 2),
         "probe_ceiling": None,
     }
@@ -185,16 +185,16 @@ def _emit_curve_report(
     """
     stream = stream if stream is not None else sys.stdout
     try:
-        bracket = outcome.get("sla_bracket") or [None, None]
+        bracket = outcome.get("slo_bracket") or [None, None]
         lines = render_curve_report(
             outcome.get("points") or [],
             axis=outcome.get("axis") or "rate",
             target=outcome.get("target") or "saturation",
             stop_reason=outcome.get("stop_reason") or "",
             bracket_reason=outcome.get("bracket_reason") or "",
-            sla_met_knob=bracket[0] if len(bracket) > 0 else None,
-            sla_first_fail_knob=bracket[1] if len(bracket) > 1 else None,
-            sla_thresholds=outcome.get("sla_thresholds") or {},
+            slo_met_knob=bracket[0] if len(bracket) > 0 else None,
+            slo_first_fail_knob=bracket[1] if len(bracket) > 1 else None,
+            slo_thresholds=outcome.get("slo_thresholds") or {},
             elapsed_seconds=outcome.get("elapsed_seconds"),
             probe_ceiling=outcome.get("probe_ceiling"),
             mode=mode,
@@ -462,8 +462,8 @@ def benchmark():
     default=False,
     help=(
         "Enable the adaptive ramp auto-tune engine: a geometric bracket, then a "
-        "unimodal search for the throughput argmax (no SLA) or a bisection for the "
-        "SLA-capacity boundary (any --sla-* set). Probes ONE answer. Mutually "
+        "unimodal search for the throughput argmax (no SLO) or a bisection for the "
+        "SLO-capacity boundary (any --slo-* set). Probes ONE answer. Mutually "
         "exclusive with --profile/--stages."
     ),
 )
@@ -527,70 +527,70 @@ def benchmark():
     "same budget.",
 )
 @click.option(
-    "--sla-avg-ttft-ms",
-    "sla_avg_ttft_ms",
+    "--slo-avg-ttft-ms",
+    "slo_avg_ttft_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable avg TTFT in ms (setting any --sla-* "
-    "switches the target to the SLA-capacity boundary).",
+    help="Auto-tune SLO target: max acceptable avg TTFT in ms (setting any --slo-* "
+    "switches the target to the SLO-capacity boundary).",
 )
 @click.option(
-    "--sla-avg-tpot-ms",
-    "sla_avg_tpot_ms",
+    "--slo-avg-tpot-ms",
+    "slo_avg_tpot_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable avg TPOT in ms.",
+    help="Auto-tune SLO target: max acceptable avg TPOT in ms.",
 )
 @click.option(
-    "--sla-p95-ttft-ms",
-    "sla_p95_ttft_ms",
+    "--slo-p95-ttft-ms",
+    "slo_p95_ttft_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable p95 TTFT in ms.",
+    help="Auto-tune SLO target: max acceptable p95 TTFT in ms.",
 )
 @click.option(
-    "--sla-p95-tpot-ms",
-    "sla_p95_tpot_ms",
+    "--slo-p95-tpot-ms",
+    "slo_p95_tpot_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable p95 TPOT in ms.",
+    help="Auto-tune SLO target: max acceptable p95 TPOT in ms.",
 )
 @click.option(
-    "--sla-p99-ttft-ms",
-    "sla_p99_ttft_ms",
+    "--slo-p99-ttft-ms",
+    "slo_p99_ttft_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable p99 TTFT in ms.",
+    help="Auto-tune SLO target: max acceptable p99 TTFT in ms.",
 )
 @click.option(
-    "--sla-p99-tpot-ms",
-    "sla_p99_tpot_ms",
+    "--slo-p99-tpot-ms",
+    "slo_p99_tpot_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable p99 TPOT in ms.",
+    help="Auto-tune SLO target: max acceptable p99 TPOT in ms.",
 )
 @click.option(
-    "--sla-avg-latency-ms",
-    "sla_avg_latency_ms",
+    "--slo-avg-latency-ms",
+    "slo_avg_latency_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable avg end-to-end request latency "
+    help="Auto-tune SLO target: max acceptable avg end-to-end request latency "
     "in ms (guidellm reports latency in seconds; converted internally).",
 )
 @click.option(
-    "--sla-p95-latency-ms",
-    "sla_p95_latency_ms",
+    "--slo-p95-latency-ms",
+    "slo_p95_latency_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable p95 end-to-end request latency "
+    help="Auto-tune SLO target: max acceptable p95 end-to-end request latency "
     "in ms (guidellm reports latency in seconds; converted internally).",
 )
 @click.option(
-    "--sla-p99-latency-ms",
-    "sla_p99_latency_ms",
+    "--slo-p99-latency-ms",
+    "slo_p99_latency_ms",
     type=float,
     default=None,
-    help="Auto-tune SLA target: max acceptable p99 end-to-end request latency "
+    help="Auto-tune SLO target: max acceptable p99 end-to-end request latency "
     "in ms (guidellm reports latency in seconds; converted internally).",
 )
 @click.option(
@@ -1045,17 +1045,17 @@ def run(**kwargs):  # noqa: C901
     min_requests = kwargs.pop("min_requests", 100)
     max_points = kwargs.pop("max_points", 12)
     max_total_seconds = kwargs.pop("max_total_seconds", 3600.0)
-    # SLA thresholds: up to 9 optional "<=" latency targets (avg + p95 + p99 of
+    # SLO thresholds: up to 9 optional "<=" latency targets (avg + p95 + p99 of
     # TTFT, TPOT, end-to-end latency), all in ms. Any subset may be set.
-    sla_avg_ttft_ms = kwargs.pop("sla_avg_ttft_ms", None)
-    sla_avg_tpot_ms = kwargs.pop("sla_avg_tpot_ms", None)
-    sla_p95_ttft_ms = kwargs.pop("sla_p95_ttft_ms", None)
-    sla_p95_tpot_ms = kwargs.pop("sla_p95_tpot_ms", None)
-    sla_p99_ttft_ms = kwargs.pop("sla_p99_ttft_ms", None)
-    sla_p99_tpot_ms = kwargs.pop("sla_p99_tpot_ms", None)
-    sla_avg_latency_ms = kwargs.pop("sla_avg_latency_ms", None)
-    sla_p95_latency_ms = kwargs.pop("sla_p95_latency_ms", None)
-    sla_p99_latency_ms = kwargs.pop("sla_p99_latency_ms", None)
+    slo_avg_ttft_ms = kwargs.pop("slo_avg_ttft_ms", None)
+    slo_avg_tpot_ms = kwargs.pop("slo_avg_tpot_ms", None)
+    slo_p95_ttft_ms = kwargs.pop("slo_p95_ttft_ms", None)
+    slo_p95_tpot_ms = kwargs.pop("slo_p95_tpot_ms", None)
+    slo_p99_ttft_ms = kwargs.pop("slo_p99_ttft_ms", None)
+    slo_p99_tpot_ms = kwargs.pop("slo_p99_tpot_ms", None)
+    slo_avg_latency_ms = kwargs.pop("slo_avg_latency_ms", None)
+    slo_p95_latency_ms = kwargs.pop("slo_p95_latency_ms", None)
+    slo_p99_latency_ms = kwargs.pop("slo_p99_latency_ms", None)
 
     # --auto-tune and --stages each drive the load axis themselves, so whichever
     # loses the dispatch below would be SILENTLY IGNORED. All three modes are
@@ -1180,8 +1180,8 @@ def run(**kwargs):  # noqa: C901
 
     if auto_tune:
         # Adaptive ramp: one single-strategy guidellm run per probed knob point.
-        # The target (SLA boundary vs throughput saturation) is derived from
-        # whether any --sla-* is set (see AutoTuneConfig.target).
+        # The target (SLO boundary vs throughput saturation) is derived from
+        # whether any --slo-* is set (see AutoTuneConfig.target).
         cfg = AutoTuneConfig(
             axis=axis,
             lower_bound=lower_bound,
@@ -1190,15 +1190,15 @@ def run(**kwargs):  # noqa: C901
             min_requests=min_requests,
             max_points=max_points,
             max_total_seconds=max_total_seconds,
-            sla_avg_ttft_ms=sla_avg_ttft_ms,
-            sla_avg_tpot_ms=sla_avg_tpot_ms,
-            sla_p95_ttft_ms=sla_p95_ttft_ms,
-            sla_p95_tpot_ms=sla_p95_tpot_ms,
-            sla_p99_ttft_ms=sla_p99_ttft_ms,
-            sla_p99_tpot_ms=sla_p99_tpot_ms,
-            sla_avg_latency_ms=sla_avg_latency_ms,
-            sla_p95_latency_ms=sla_p95_latency_ms,
-            sla_p99_latency_ms=sla_p99_latency_ms,
+            slo_avg_ttft_ms=slo_avg_ttft_ms,
+            slo_avg_tpot_ms=slo_avg_tpot_ms,
+            slo_p95_ttft_ms=slo_p95_ttft_ms,
+            slo_p95_tpot_ms=slo_p95_tpot_ms,
+            slo_p99_ttft_ms=slo_p99_ttft_ms,
+            slo_p99_tpot_ms=slo_p99_tpot_ms,
+            slo_avg_latency_ms=slo_avg_latency_ms,
+            slo_p95_latency_ms=slo_p95_latency_ms,
+            slo_p99_latency_ms=slo_p99_latency_ms,
             # `... or 42` would turn an explicit --random-seed 0 (a valid seed)
             # into 42; test None explicitly instead so 0 survives.
             random_seed_base=(
@@ -1475,8 +1475,8 @@ def chart(path: Path, chart_mode: str, width: int | None, force_ascii: bool):
         if sidecar.name.endswith(RAMP_OUTCOME_SUFFIX):
             detail = (
                 f" (schema version {outcome.get('version', '?')}; inline points "
-                f"need version {RAMP_OUTCOME_VERSION}) — re-run the ramp to get a "
-                "chartable sidecar"
+                f"need version {RAMP_OUTCOME_POINTS_VERSION} or later) — re-run the "
+                "ramp to get a chartable sidecar"
             )
         raise click.ClickException(f"{sidecar} carries no measured points{detail}.")
     style = detect_style(sys.stdout, width=width)
