@@ -208,10 +208,19 @@ class AutoTuneConfig:
     axis: str  # "rate" | "concurrency"
     # [lower_bound, upper_bound] is a HARD range: the ramp starts at lower_bound and
     # measures nothing outside either end (a peak below the floor is REPORTED, not
-    # searched for — see the Phase-1 plateau branch). Defaults are kept identical to
-    # the CLI options and the gpustack presets/UI; 4 skips the low-info 1/2 points.
+    # searched for — see the Phase-1 plateau branch). 4 skips the low-info 1/2
+    # points; raising it further is the one knob here with a cliff, since a floor
+    # above the SLO boundary fails the FIRST point and leaves no bracket at all.
+    #
+    # The ceiling is 8192 rather than 1024 because the two directions are not
+    # symmetric. Too high costs nothing — Phase 1 ends on capacity_plateau or the
+    # SLO breach, so a small deployment never reaches it (measured: identical point
+    # count and wall clock at 1024 through 8192 for peaks up to 1024). Too low ends
+    # the run on `upper_bound` and reports the range end as the peak/boundary, i.e.
+    # a number nothing measured: at 1024 a 4096-concurrency deployment reported
+    # 4096 against a true boundary of 5612, and no point budget could fix it.
     lower_bound: float = 4.0
-    upper_bound: float = 1024.0
+    upper_bound: float = 8192.0
     multiplier: Optional[float] = None  # default resolved by axis (10 conc / 30 rate)
     # Per-point request floor. 100 rather than 30 because a percentile is only as
     # good as the samples above it: with n samples, p99 has n/100 above it, so at
@@ -227,8 +236,22 @@ class AutoTuneConfig:
     # Cap on MEASURED points. The saturation probe is not one of them (it writes a
     # "__satprobe" file the consumer's point glob never matches and never enters an
     # aggregate), so it does not spend this budget — only wall clock.
-    max_points: int = 12
-    max_total_seconds: float = 3600.0  # 1h; kept in sync with the CLI default
+    #
+    # A CEILING, not a quota: a search that converges stops there, so a small
+    # deployment still finishes in 6 points under an 18-point budget. That is why
+    # the default sizes for the expensive case (an SLO bisection on a large
+    # deployment, which needs Phase 1's doublings plus log2 of the bracket) instead
+    # of the cheap one. At 12 the largest sizes reported boundaries 4-27% off, the
+    # bisection having never closed; at 18 every size measured lands within ~2%,
+    # which is the noise floor rather than a budget limit — 22 points measured the
+    # same 2.0%. A caller whose target is saturation can go lower — that answer is
+    # an argmax Phase 1 has already found, so the narrowing buys it nothing.
+    max_points: int = 18
+    # 1.5h. Not merely a stop signal: it is also handed to each point as
+    # max_seconds, so a budget the run cannot fit SHORTENS the last measurements
+    # rather than dropping them — and stop_reason still reports `budget_points`.
+    # The largest sizes need 64-73 min at 18 points.
+    max_total_seconds: float = 5400.0
     # SLO thresholds (all optional, all in ms, all "<=" comparisons).
     slo_avg_ttft_ms: Optional[float] = None
     slo_p95_ttft_ms: Optional[float] = None

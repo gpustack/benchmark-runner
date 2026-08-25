@@ -1117,7 +1117,9 @@ class TestStopReasons:
             "points_measured": len(o.points),
             "max_points": 12,
             "elapsed_seconds": d["elapsed_seconds"],
-            "max_total_seconds": 3600.0,
+            # sat_cfg pins max_points but not the clock, so this is AutoTuneConfig's
+            # own default travelling through to the sidecar.
+            "max_total_seconds": 5400.0,
             "slo_bracket": None,
             "probe_ceiling": None,
             "probe_relaxed": 0,

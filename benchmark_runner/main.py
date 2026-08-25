@@ -482,17 +482,20 @@ def benchmark():
     default=4.0,
     help="Auto-tune knob lower bound: where the ramp starts AND the floor it "
     "never measures below (the range is hard at both ends). Default 4 skips the "
-    "low-information 1/2 points; kept in sync with AutoTuneConfig and the "
-    "gpustack presets.",
+    "low-information 1/2 points. Raise with care: a floor at or above the SLO "
+    "boundary fails the first point, leaving no bracket to bisect.",
 )
 @click.option(
     "--upper-bound",
     "upper_bound",
     type=float,
-    default=1024.0,
+    default=8192.0,
     help="Auto-tune knob upper bound: hard ceiling (anti-runaway). Hitting it "
-    "while throughput still climbs stops the ramp; the saturation probe's soft "
-    "cap can only tighten below it, never override it.",
+    "while throughput still climbs stops the ramp and makes the range end the "
+    "reported answer, so prefer it too high over too low — Phase 1 ends on "
+    "saturation or the SLO breach well before the ceiling on all but the largest "
+    "deployments. The saturation probe's soft cap can only tighten below it, "
+    "never override it.",
 )
 @click.option(
     "--multiplier",
@@ -514,17 +517,21 @@ def benchmark():
     "--max-points",
     "max_points",
     type=int,
-    default=12,
-    help="Auto-tune max number of measured points (guards a too-flat curve).",
+    default=18,
+    help="Auto-tune max number of measured points (guards a too-flat curve). A "
+    "ceiling, not a quota: a converged search stops early, so this is sized for "
+    "the expensive case (an SLO bisection on a large deployment) and costs a small "
+    "one nothing. Below ~18 the largest deployments report a boundary the "
+    "bisection never closed on.",
 )
 @click.option(
     "--max-total-seconds",
     "max_total_seconds",
     type=float,
-    default=3600.0,
-    help="Auto-tune total wall-clock budget across all points (seconds). "
-    "Matches the shipped gpustack presets, so a preset and a bare CLI run get the "
-    "same budget.",
+    default=5400.0,
+    help="Auto-tune total wall-clock budget across all points (seconds). Also "
+    "handed to each point as max_seconds, so a budget the run cannot fit shortens "
+    "the last measurements rather than dropping them.",
 )
 @click.option(
     "--slo-avg-ttft-ms",

@@ -79,8 +79,8 @@ throughput".
 benchmark-runner benchmark run \
   --target http://localhost:8000 \
   --auto-tune --axis rate \
-  --lower-bound 4 --upper-bound 1024 \
-  --max-points 12 --max-total-seconds 3600 \
+  --lower-bound 4 --upper-bound 8192 \
+  --max-points 15 --max-total-seconds 3600 \
   --data "prompt_tokens=1024,output_tokens=128" \
   --processor PROCESSOR_PATH
 
@@ -105,12 +105,22 @@ while throughput is still climbing stops the sweep (rather than quietly probing
 higher); symmetrically, a server that is *already* saturated at the lower bound is
 **reported** rather than searched below — the ramp stops, and gpustack raises a
 `saturated_at_lower_bound` warning carrying the measured sustainable rate so you can
-lower the range and re-run. Defaults are 4 / 1024, identical to the gpustack presets.
+lower the range and re-run. Defaults are 4 / 8192. The ceiling is deliberately far
+above any expected deployment: too high is free, since Phase 1 ends on saturation or
+the SLO breach first, while too low ends the run on `upper_bound` and makes the range
+end the reported answer — a number nothing measured.
 
-**Budget** — `--max-points` and `--max-total-seconds` (default 3600) cap the whole
-run; per-point request counts are derived as `max(--min-requests, knob * multiplier)`
-with the multiplier defaulting by axis (10 concurrency / 30 rate), so every point
-below saturation gets a comparable ~30s measurement window.
+**Budget** — `--max-points` (default 18) and `--max-total-seconds` (default 5400) cap
+the whole run. Both are ceilings, not quotas: a converged search stops early, so a
+small deployment finishes in ~6 points regardless. They are sized for the expensive
+case — an SLO bisection on a large deployment, which needs Phase 1's doublings plus
+log2 of the bracket width. A saturation run can be given less: its answer is an argmax
+that Phase 1 has already found, and the bisection-style narrowing buys it nothing —
+which is why gpustack's Max Throughput preset ships a smaller budget than its latency
+one. Per-point request counts are derived as
+`max(--min-requests, knob * multiplier)` with the multiplier defaulting by axis
+(10 concurrency / 30 rate), so every point below saturation gets a comparable ~30s
+measurement window.
 
 The duration cap binds from *inside* a point as well as between points: each run
 (the saturation probe included) is given whatever is left of the budget as its own
@@ -151,12 +161,12 @@ than one logs which entries it ignored rather than quietly emitting only the fir
 
 ```json
 {
-  "version": 1,
+  "version": 3,
   "bracket_reason": "capacity_plateau",
   "stop_reason": "converged",
   "stopped_at": 256.0,
-  "points_measured": 7, "max_points": 12,
-  "elapsed_seconds": 54.32, "max_total_seconds": 3600.0,
+  "points_measured": 7, "max_points": 18,
+  "elapsed_seconds": 54.32, "max_total_seconds": 5400.0,
   "slo_bracket": [256.0, null],
   "probe_ceiling": null
 }
