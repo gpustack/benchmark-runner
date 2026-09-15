@@ -26,6 +26,14 @@ Adjustments in this module:
    the base already built stay valid for a different instance of a sibling class.
    A handler that accumulated per-request state in ``format()`` would need the
    override applied BEFORE formatting instead.
+5) Record per-chunk inter-token latency (ITL) samples, which the stock loop
+   discards: it keeps only the first and last token timestamps, so the individual
+   gaps are unrecoverable afterwards (``iter_tokens_timings`` reconstructs them
+   with ``np.linspace``, i.e. assumes they were evenly spaced — which is what
+   hides a decode stall). The samples ride back to the main process on
+   ``RequestInfo.timings`` under ``ITL_TIMINGS_FIELD``; ``output_dual_json``
+   aggregates them into a distribution. See that module for the aggregation and
+   for why this needs no guidellm changes.
 
 guidellm 0.7.x vs 0.6.0:
 - Backend config is stored on ``self._args`` (an ``OpenAIHTTPBackendArgs``), not as
@@ -78,8 +86,21 @@ from guidellm.schemas import (
 
 ERROR_DETAIL_BACKEND_TYPE = "openai_http_error_detail"
 MAX_ERROR_DETAIL_LENGTH = 2048
+
+# Extra field stamped onto ``RequestInfo.timings`` carrying this request's ITL
+# samples in milliseconds. NOT a declared guidellm field -- ``RequestTimings``
+# extends ``StandardBaseDict`` (``extra="allow"``), which is what makes this
+# possible without forking guidellm. ``RequestInfo`` itself is ``extra="ignore"``,
+# so the samples MUST hang off ``timings``, not off the info object.
+#
+# The name is a constant rather than a literal because the aggregation side
+# (``output_dual_json``) reads it back; a typo on either side would silently
+# produce an empty distribution instead of failing.
+ITL_TIMINGS_FIELD = "inter_token_latencies_ms"
+
 __all__ = [
     "ERROR_DETAIL_BACKEND_TYPE",
+    "ITL_TIMINGS_FIELD",
     "MAX_ERROR_DETAIL_LENGTH",
     "OpenAIHTTPErrorDetailBackend",
     "OpenAIHTTPErrorDetailBackendArgs",
@@ -327,9 +348,28 @@ class OpenAIHTTPErrorDetailBackend(OpenAIHTTPBackend):
         request_kwargs: dict[str, Any],
     ) -> AsyncIterator[tuple[GenerationResponse | None, RequestInfo]]:
         """Streaming path: mirrors the base loop (incl. TTFOT tracking) but reads
-        the error body before raising so the detail is preserved."""
+        the error body before raising so the detail is preserved, and records the
+        per-chunk ITL samples the base loop throws away."""
         if self._async_client is None:
             raise RuntimeError("Backend not started up for process.")
+
+        # ITL samples for this request, in milliseconds.
+        #
+        # guidellm keeps only the FIRST and LAST token timestamps per request
+        # (``first_token_iteration`` / ``last_token_iteration``); the individual
+        # gaps never survive collection -- ``iter_tokens_timings`` reconstructs
+        # them after the fact with ``np.linspace``, i.e. it assumes they were
+        # evenly spaced. That assumption is exactly what hides a decode stall, so
+        # the gaps are recorded here, where the timestamps actually exist.
+        #
+        # Same measurement point and formula as vLLM's ITL: one sample per gap
+        # between consecutive streamed outputs. A chunk carrying several tokens
+        # (speculative decoding, reasoning deltas) still yields ONE sample -- no
+        # zero-duration gaps are invented for its bundled tokens, matching
+        # vLLM's "the tokens in the same output do not create additional ITL
+        # samples". The first chunk has no predecessor and contributes nothing:
+        # that interval is TTFT.
+        itl_gaps_ms: list[float] = []
 
         try:
             request_info.timings.request_start = time.time()
@@ -377,14 +417,26 @@ class OpenAIHTTPErrorDetailBackend(OpenAIHTTPBackend):
                     ):
                         request_info.timings.first_output_token_iteration = iter_time
 
+                    # Read the PREVIOUS token chunk's timestamp before it is
+                    # overwritten below: None means this is the first one.
+                    prev_iter = request_info.timings.last_token_iteration
+                    if prev_iter is not None:
+                        itl_gaps_ms.append((iter_time - prev_iter) * 1000.0)
+
                     request_info.timings.last_token_iteration = iter_time
                     request_info.timings.token_iterations += iterations
 
             request_info.timings.request_end = time.time()
+            setattr(request_info.timings, ITL_TIMINGS_FIELD, itl_gaps_ms)
             gen_response = request_handler.compile_streaming(request, arguments)
             request_handler.post_validation(gen_response)
             self._check_tool_call_expectations(request, gen_response)
             yield gen_response, request_info
         except asyncio.CancelledError as err:
+            # Stamp what was measured before the cancellation too. A cancelled
+            # request is incomplete and does not feed the successful aggregate,
+            # but dropping the samples here would make the partial record lie
+            # about having none.
+            setattr(request_info.timings, ITL_TIMINGS_FIELD, itl_gaps_ms)
             yield request_handler.compile_streaming(request, arguments), request_info
             raise err
