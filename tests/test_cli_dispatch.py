@@ -12,6 +12,7 @@ import json
 from click.testing import CliRunner
 
 import benchmark_runner.main as main
+from benchmark_runner import auto_tune
 from benchmark_runner.auto_tune import RampOutcome
 from benchmark_runner.main import cli
 
@@ -323,7 +324,7 @@ def test_ramp_outcome_is_written_beside_the_point_files(monkeypatch, tmp_path):
     assert facts["stop_reason"] == "converged"
     assert facts["stopped_at"] == 256.0
     assert facts["slo_bracket"] == [256.0, None]
-    assert facts["version"] == 3
+    assert facts["version"] == auto_tune.RAMP_OUTCOME_VERSION
     # v2 carries the measured grid inline, which is what `benchmark-runner chart`
     # redraws from. Without it the sidecar says only why the search stopped, and
     # rebuilding the curve means globbing and re-parsing the point reports.
@@ -442,3 +443,23 @@ def test_a_single_output_does_not_warn(monkeypatch, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert "ignoring the remaining --outputs" not in result.output
+
+
+def test_both_itl_flag_spellings_reach_the_same_option():
+    """The old `--slo-*-tpot-ms` spelling stays accepted.
+
+    gpustack and this runner ship separately, so an upgrade lands on one side
+    first. A flag rename that dropped the old name would fail those runs
+    outright — the runner would reject an argument it no longer knows.
+    """
+    from click.testing import CliRunner
+
+    from benchmark_runner.main import cli
+
+    params = {p.name: p for p in cli.commands["benchmark"].commands["run"].params}
+    for agg in ("avg", "p95", "p99"):
+        option = params[f"slo_{agg}_itl_ms"]
+        assert f"--slo-{agg}-itl-ms" in option.opts
+        assert f"--slo-{agg}-tpot-ms" in option.opts
+
+    assert CliRunner() is not None

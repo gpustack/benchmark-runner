@@ -500,10 +500,10 @@ def _fmt_ms(v: float) -> str:
 
 
 def _fmt_ms_precise(v: float) -> str:
-    """Table formatting for TPOT, which lives in the single-digit-ms range.
+    """Table formatting for ITL, which lives in the single-digit-ms range.
 
     ``_fmt_ms`` drops the decimal above 10ms, which is right for an axis label and
-    wrong for a TPOT column: 16.2 vs 12.1 ms per token is the difference between
+    wrong for an ITL column: 16.2 vs 12.1 ms per token is the difference between
     two operating points, and rounding both to whole ms hides it.
     """
     if v >= 1000:
@@ -628,6 +628,17 @@ def render_curve_report(
     )
     out.append("")
     return out
+
+
+def _itl_of(point: dict) -> float:
+    """The point's inter-token latency, reading sidecars from before the rename.
+
+    The field was called ``tpot_ms`` until this project adopted guidellm's
+    vocabulary (gpustack still calls the same quantity TPOT — see
+    ``PointMetrics``). Same number either way, so an older sidecar charts
+    normally instead of showing a blank column.
+    """
+    return _num(point, "itl_ms") or _num(point, "tpot_ms")
 
 
 def _headline_charts(
@@ -798,7 +809,7 @@ def _table(
     _, knob_header, _ = _axis_names(axis)
     peak_tps = max((_num(p, "output_tps") for p in points), default=0.0) or 1.0
     header = (
-        f"   {knob_header:>7} {'achieved':>9} {'TTFT p99':>10} {'TPOT':>9} "
+        f"   {knob_header:>7} {'achieved':>9} {'TTFT p99':>10} {'ITL':>9} "
         f"{'tok/s':>10}  {'':<18} {'ok':>5}"
     )
     ruler = style.text["rule"] * (len(header) - 2)
@@ -811,7 +822,7 @@ def _table(
             f" {style.paint(glyph, status)} {_fmt_knob(_num(point, 'knob')):>7} "
             f"{_num(point, 'achieved_rate'):>9.1f} "
             f"{_fmt_ms(_num(point, 'ttft_p99_ms') or _num(point, 'ttft_ms')):>10} "
-            f"{_fmt_ms_precise(_num(point, 'tpot_ms')):>9} "
+            f"{_fmt_ms_precise(_itl_of(point)):>9} "
             f"{tps:>10,.0f}  {bar:<18} {_num(point, 'success') * 100:>4.0f}%"
         )
         out.append(f"  {row}")
@@ -863,7 +874,7 @@ def _verdict(  # noqa: C901 - one sentence per mode; a dispatch table hides the 
     out = [f"  {headline}"]
     out.append(
         f"    TTFT p99 {_fmt_ms(_num(chosen, 'ttft_p99_ms') or _num(chosen, 'ttft_ms'))}"
-        f" {sep} TPOT {_fmt_ms_precise(_num(chosen, 'tpot_ms'))}"
+        f" {sep} ITL {_fmt_ms_precise(_itl_of(chosen))}"
         f" {sep} achieved {_num(chosen, 'achieved_rate'):.1f} req/s"
         f" {sep} {_num(chosen, 'success') * 100:.0f}% ok"
     )

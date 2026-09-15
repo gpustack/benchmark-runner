@@ -103,7 +103,14 @@ STOP_POINT_FAILED = "point_failed"  # a point produced no benchmark
 # spells them ``sla_*``, so a reader that only knows v3 finds no thresholds there
 # and draws the curve without its budget lines. The version is what lets it tell
 # that apart from "this run had no thresholds", which is the same empty dict.
-RAMP_OUTCOME_VERSION = 3
+#
+# v4 renamed the per-token fields TPOT -> ITL, adopting guidellm's vocabulary for
+# the metric this project reads from it: ``points[].tpot_ms`` -> ``itl_ms`` (and
+# the p95/p99 pair), ``slo_thresholds`` keys ``slo_*_tpot_ms`` -> ``slo_*_itl_ms``.
+# Also NOT additive, for the same reason as v3. `chart` reads the old spelling as
+# a fallback, so a v3 sidecar still renders; gpustack is unaffected — it reads
+# stop_reason / stopped_at / probe_* from here and nothing else.
+RAMP_OUTCOME_VERSION = 4
 
 # The version that first carried ``points``. Named separately from the current
 # version because it is the floor a chartable sidecar has to clear, and the two
@@ -161,7 +168,7 @@ class PointMetrics:
     """Normalized metrics for one measured knob point.
 
     All latency-family fields are stored in MILLISECONDS so they compare directly
-    to the ms-denominated SLO thresholds. TTFT/TPOT are already ms in guidellm;
+    to the ms-denominated SLO thresholds. TTFT/ITL are already ms in guidellm;
     request latency is SECONDS in guidellm and is converted to ms here (x1000).
     """
 
@@ -171,23 +178,28 @@ class PointMetrics:
     ttft_ms: float  # metrics.time_to_first_token_ms.successful.mean
     ttft_p95_ms: float  # ...time_to_first_token_ms.successful.percentiles.p95
     ttft_p99_ms: float  # ...time_to_first_token_ms.successful.percentiles.p99
-    # TPOT = DECODE-ONLY time per output token, which guidellm files under
-    # `inter_token_latency_ms`: (last_token - first_token) / (output_tokens - 1).
-    # That is the industry's TPOT (vLLM, genai-perf) and what the server's
-    # SLO_THRESHOLDS evaluates, so the bracketing here and the stored verdict
-    # agree. guidellm's `time_per_output_token_ms` divides by output_tokens from
+    # Named after guidellm's own field, because that is this module's data
+    # source. `inter_token_latency_ms` is the DECODE-ONLY time per output token,
+    # (last_token - first_token) / (output_tokens - 1).
+    #
+    # gpustack calls the same quantity TPOT, and its `--slo-*-itl-ms` flags map
+    # onto these fields — see `slo_pairs`. The vocabularies differ on purpose:
+    # this project speaks guidellm's, gpustack speaks its own, and the mapping
+    # lives on gpustack's side in SLO_THRESHOLDS.
+    #
+    # guidellm's `time_per_output_token_ms` divides by output_tokens from
     # request_start instead, folding TTFT into the decode average — it used to
-    # feed these three fields, which made a TPOT threshold tighten with queueing
-    # (the error is TTFT / (n * TPOT): ~5% at 128 output tokens, ~40% at 16).
+    # feed these three fields, which made a threshold tighten with queueing (the
+    # error is TTFT / (n * ITL): ~5% at 128 output tokens, ~40% at 16).
     #
     # It remains the FALLBACK, because the decode-only reading needs two token
     # timestamps: a response delivered as one chunk (whole output at once, common
     # at low load) has first_iteration == last_iteration and guidellm reports 0.
     # Falling back keeps the threshold evaluable there; 0 would clear every budget
     # and failing outright would bracket the ramp on its first point.
-    tpot_ms: float  # metrics.inter_token_latency_ms.successful.mean
-    tpot_p95_ms: float  # ...inter_token_latency_ms.successful.percentiles.p95
-    tpot_p99_ms: float  # ...inter_token_latency_ms.successful.percentiles.p99
+    itl_ms: float  # metrics.inter_token_latency_ms.successful.mean
+    itl_p95_ms: float  # ...inter_token_latency_ms.successful.percentiles.p95
+    itl_p99_ms: float  # ...inter_token_latency_ms.successful.percentiles.p99
     latency_ms: float  # metrics.request_latency.successful.mean * 1000 (s -> ms)
     latency_p95_ms: float  # ...request_latency.successful.percentiles.p95 * 1000
     latency_p99_ms: float  # ...request_latency.successful.percentiles.p99 * 1000
@@ -200,7 +212,7 @@ class AutoTuneConfig:
     """Ramp engine inputs (all supplied via CLI).
 
     SLO is a set of up to 9 OPTIONAL "<=" latency thresholds (all in ms): avg + p95
-    + p99 of TTFT, TPOT, and end-to-end latency. Any subset may be set; the target
+    + p99 of TTFT, ITL, and end-to-end latency. Any subset may be set; the target
     becomes "slo" iff at least one is set, and a point passes iff every SET
     threshold holds.
     """
@@ -256,9 +268,9 @@ class AutoTuneConfig:
     slo_avg_ttft_ms: Optional[float] = None
     slo_p95_ttft_ms: Optional[float] = None
     slo_p99_ttft_ms: Optional[float] = None
-    slo_avg_tpot_ms: Optional[float] = None
-    slo_p95_tpot_ms: Optional[float] = None
-    slo_p99_tpot_ms: Optional[float] = None
+    slo_avg_itl_ms: Optional[float] = None
+    slo_p95_itl_ms: Optional[float] = None
+    slo_p99_itl_ms: Optional[float] = None
     slo_avg_latency_ms: Optional[float] = None
     slo_p95_latency_ms: Optional[float] = None
     slo_p99_latency_ms: Optional[float] = None
@@ -291,9 +303,9 @@ class AutoTuneConfig:
             (self.slo_avg_ttft_ms, m.ttft_ms),
             (self.slo_p95_ttft_ms, m.ttft_p95_ms),
             (self.slo_p99_ttft_ms, m.ttft_p99_ms),
-            (self.slo_avg_tpot_ms, m.tpot_ms),
-            (self.slo_p95_tpot_ms, m.tpot_p95_ms),
-            (self.slo_p99_tpot_ms, m.tpot_p99_ms),
+            (self.slo_avg_itl_ms, m.itl_ms),
+            (self.slo_p95_itl_ms, m.itl_p95_ms),
+            (self.slo_p99_itl_ms, m.itl_p99_ms),
             (self.slo_avg_latency_ms, m.latency_ms),
             (self.slo_p95_latency_ms, m.latency_p95_ms),
             (self.slo_p99_latency_ms, m.latency_p99_ms),
@@ -305,9 +317,9 @@ class AutoTuneConfig:
             "slo_avg_ttft_ms",
             "slo_p95_ttft_ms",
             "slo_p99_ttft_ms",
-            "slo_avg_tpot_ms",
-            "slo_p95_tpot_ms",
-            "slo_p99_tpot_ms",
+            "slo_avg_itl_ms",
+            "slo_p95_itl_ms",
+            "slo_p99_itl_ms",
             "slo_avg_latency_ms",
             "slo_p95_latency_ms",
             "slo_p99_latency_ms",
@@ -423,7 +435,7 @@ def _normalize(benchmark: Any, knob: float, index: int) -> PointMetrics:
     """Map a guidellm ``benchmarks[0]`` result to our flat PointMetrics.
 
     Note: ``request_latency`` is in SECONDS in guidellm; the SLO thresholds are in
-    ms, so its mean/p99 are multiplied by 1000 here. TTFT/TPOT are already ms.
+    ms, so its mean/p99 are multiplied by 1000 here. TTFT/ITL are already ms.
     """
     m = benchmark.metrics
     totals = m.request_totals
@@ -441,18 +453,18 @@ def _normalize(benchmark: Any, knob: float, index: int) -> PointMetrics:
         ttft_p99_ms=_mean(
             m, "time_to_first_token_ms", "successful", "percentiles", "p99"
         ),
-        # Decode-only, i.e. the industry TPOT — see PointMetrics.tpot_ms. `or`
+        # Decode-only — see PointMetrics.itl_ms. `or`
         # takes the includes-TTFT reading when the decode-only one is 0, which is
         # what a non-incrementally streamed response leaves behind.
-        tpot_ms=(
+        itl_ms=(
             _mean(m, "inter_token_latency_ms", "successful", "mean")
             or _mean(m, "time_per_output_token_ms", "successful", "mean")
         ),
-        tpot_p95_ms=(
+        itl_p95_ms=(
             _mean(m, "inter_token_latency_ms", "successful", "percentiles", "p95")
             or _mean(m, "time_per_output_token_ms", "successful", "percentiles", "p95")
         ),
-        tpot_p99_ms=(
+        itl_p99_ms=(
             _mean(m, "inter_token_latency_ms", "successful", "percentiles", "p99")
             or _mean(m, "time_per_output_token_ms", "successful", "percentiles", "p99")
         ),
@@ -471,7 +483,7 @@ def _passes_slo(m: PointMetrics, cfg: AutoTuneConfig) -> bool:
     """SLO-pass = success>=95% AND every SET threshold holds (<=).
 
     AND is taken over SET thresholds only; unset (None) thresholds are ignored.
-    Up to 9 dimensions: avg+p95+p99 of TTFT, TPOT, and end-to-end latency (all ms).
+    Up to 9 dimensions: avg+p95+p99 of TTFT, ITL, and end-to-end latency (all ms).
     """
     if m.success < SUCCESS_FLOOR:
         return False
@@ -480,7 +492,7 @@ def _passes_slo(m: PointMetrics, cfg: AutoTuneConfig) -> bool:
             continue
         # A non-positive value means the metric was not measured, not that it took
         # 0 ms: `_normalize` returns 0.0 for anything missing from the report, and
-        # the decode-only TPOT is genuinely undefined when requests emit a single
+        # the decode-only reading is genuinely undefined when requests emit a single
         # token (no second token to time), which guidellm reports as 0.0. Waiving
         # the threshold there would let a max_tokens=1 run pass every point and
         # ramp to the upper bound. Failing instead surfaces it as slo_never_met.

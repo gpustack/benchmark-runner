@@ -542,11 +542,16 @@ def benchmark():
     "switches the target to the SLO-capacity boundary).",
 )
 @click.option(
+    "--slo-avg-itl-ms",
+    # Accepted under its former name too, so a gpustack that predates the rename
+    # keeps working against a newer runner image (and vice versa): the two ship
+    # separately, and a flag mismatch would fail the run outright.
     "--slo-avg-tpot-ms",
-    "slo_avg_tpot_ms",
+    "slo_avg_itl_ms",
     type=float,
     default=None,
-    help="Auto-tune SLO target: max acceptable avg TPOT in ms.",
+    help="Auto-tune SLO target: max acceptable avg inter-token latency in ms "
+    "(guidellm's `inter_token_latency_ms`; gpustack calls it TPOT).",
 )
 @click.option(
     "--slo-p95-ttft-ms",
@@ -556,11 +561,16 @@ def benchmark():
     help="Auto-tune SLO target: max acceptable p95 TTFT in ms.",
 )
 @click.option(
+    "--slo-p95-itl-ms",
+    # Accepted under its former name too, so a gpustack that predates the rename
+    # keeps working against a newer runner image (and vice versa): the two ship
+    # separately, and a flag mismatch would fail the run outright.
     "--slo-p95-tpot-ms",
-    "slo_p95_tpot_ms",
+    "slo_p95_itl_ms",
     type=float,
     default=None,
-    help="Auto-tune SLO target: max acceptable p95 TPOT in ms.",
+    help="Auto-tune SLO target: max acceptable p95 inter-token latency in ms "
+    "(guidellm's `inter_token_latency_ms`; gpustack calls it TPOT).",
 )
 @click.option(
     "--slo-p99-ttft-ms",
@@ -570,11 +580,16 @@ def benchmark():
     help="Auto-tune SLO target: max acceptable p99 TTFT in ms.",
 )
 @click.option(
+    "--slo-p99-itl-ms",
+    # Accepted under its former name too, so a gpustack that predates the rename
+    # keeps working against a newer runner image (and vice versa): the two ship
+    # separately, and a flag mismatch would fail the run outright.
     "--slo-p99-tpot-ms",
-    "slo_p99_tpot_ms",
+    "slo_p99_itl_ms",
     type=float,
     default=None,
-    help="Auto-tune SLO target: max acceptable p99 TPOT in ms.",
+    help="Auto-tune SLO target: max acceptable p99 inter-token latency in ms "
+    "(guidellm's `inter_token_latency_ms`; gpustack calls it TPOT).",
 )
 @click.option(
     "--slo-avg-latency-ms",
@@ -1053,13 +1068,13 @@ def run(**kwargs):  # noqa: C901
     max_points = kwargs.pop("max_points", 12)
     max_total_seconds = kwargs.pop("max_total_seconds", 3600.0)
     # SLO thresholds: up to 9 optional "<=" latency targets (avg + p95 + p99 of
-    # TTFT, TPOT, end-to-end latency), all in ms. Any subset may be set.
+    # TTFT, ITL, end-to-end latency), all in ms. Any subset may be set.
     slo_avg_ttft_ms = kwargs.pop("slo_avg_ttft_ms", None)
-    slo_avg_tpot_ms = kwargs.pop("slo_avg_tpot_ms", None)
+    slo_avg_itl_ms = kwargs.pop("slo_avg_itl_ms", None)
     slo_p95_ttft_ms = kwargs.pop("slo_p95_ttft_ms", None)
-    slo_p95_tpot_ms = kwargs.pop("slo_p95_tpot_ms", None)
+    slo_p95_itl_ms = kwargs.pop("slo_p95_itl_ms", None)
     slo_p99_ttft_ms = kwargs.pop("slo_p99_ttft_ms", None)
-    slo_p99_tpot_ms = kwargs.pop("slo_p99_tpot_ms", None)
+    slo_p99_itl_ms = kwargs.pop("slo_p99_itl_ms", None)
     slo_avg_latency_ms = kwargs.pop("slo_avg_latency_ms", None)
     slo_p95_latency_ms = kwargs.pop("slo_p95_latency_ms", None)
     slo_p99_latency_ms = kwargs.pop("slo_p99_latency_ms", None)
@@ -1198,11 +1213,11 @@ def run(**kwargs):  # noqa: C901
             max_points=max_points,
             max_total_seconds=max_total_seconds,
             slo_avg_ttft_ms=slo_avg_ttft_ms,
-            slo_avg_tpot_ms=slo_avg_tpot_ms,
+            slo_avg_itl_ms=slo_avg_itl_ms,
             slo_p95_ttft_ms=slo_p95_ttft_ms,
-            slo_p95_tpot_ms=slo_p95_tpot_ms,
+            slo_p95_itl_ms=slo_p95_itl_ms,
             slo_p99_ttft_ms=slo_p99_ttft_ms,
-            slo_p99_tpot_ms=slo_p99_tpot_ms,
+            slo_p99_itl_ms=slo_p99_itl_ms,
             slo_avg_latency_ms=slo_avg_latency_ms,
             slo_p95_latency_ms=slo_p95_latency_ms,
             slo_p99_latency_ms=slo_p99_latency_ms,

@@ -50,9 +50,9 @@ def make_point(knob, tps, *, ttft_p99=100.0, tpot=10.0, success=1.0, achieved=No
         "ttft_ms": ttft_p99 * 0.6,
         "ttft_p95_ms": ttft_p99 * 0.9,
         "ttft_p99_ms": float(ttft_p99),
-        "tpot_ms": float(tpot),
-        "tpot_p95_ms": float(tpot),
-        "tpot_p99_ms": float(tpot),
+        "itl_ms": float(tpot),
+        "itl_p95_ms": float(tpot),
+        "itl_p99_ms": float(tpot),
         "latency_ms": 0.0,
         "latency_p95_ms": 0.0,
         "latency_p99_ms": 0.0,
@@ -728,3 +728,19 @@ class TestTheReportIsNeverLoadBearing:
         assert result.exit_code == 0, result.output
         assert "Recommended:" in result.output
         assert "total throughput (tok/s)" not in result.output
+
+
+def test_chart_reads_the_pre_rename_sidecar():
+    """A v3 sidecar spells the per-token field `tpot_ms`.
+
+    The rename to guidellm's vocabulary happened in v4. Charting an older run
+    must still show its ITL column rather than a blank one — the number is the
+    same, only the key moved.
+    """
+    from benchmark_runner.chart import _itl_of
+
+    assert _itl_of({"itl_ms": 12.5}) == 12.5
+    assert _itl_of({"tpot_ms": 12.5}) == 12.5
+    # The current spelling wins when a file somehow carries both.
+    assert _itl_of({"itl_ms": 12.5, "tpot_ms": 99.0}) == 12.5
+    assert _itl_of({}) == 0.0

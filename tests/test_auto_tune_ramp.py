@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 from benchmark_runner.auto_tune import (
+    RAMP_OUTCOME_VERSION,
     AutoTuneConfig,
     PointMetrics,
     _normalize,
@@ -61,9 +62,9 @@ def make_metrics(
         ttft_ms=ttft,
         ttft_p95_ms=ttft,
         ttft_p99_ms=ttft,
-        tpot_ms=tpot,
-        tpot_p95_ms=tpot,
-        tpot_p99_ms=tpot,
+        itl_ms=tpot,
+        itl_p95_ms=tpot,
+        itl_p99_ms=tpot,
         latency_ms=latency,
         latency_p95_ms=latency,
         latency_p99_ms=latency,
@@ -1103,9 +1104,8 @@ class TestStopReasons:
             make_run_point(lambda k: k * 1000.0),
         )
         d = o.to_dict()
-        assert d["version"] == 3
         assert d == {
-            "version": 3,
+            "version": RAMP_OUTCOME_VERSION,
             "points": [asdict(p) for p in o.points],
             "bracket_reason": STOP_UPPER_BOUND,
             "stop_reason": STOP_UPPER_BOUND,
@@ -1301,14 +1301,14 @@ class TestTpotIsDecodeOnly:
 
     def test_normalize_reads_the_decode_only_metric(self):
         m = _normalize(self._report(itl=4.5, tpot_incl_ttft=6.1), knob=4.0, index=0)
-        assert (m.tpot_ms, m.tpot_p95_ms, m.tpot_p99_ms) == (4.5, 4.5, 4.5)
+        assert (m.itl_ms, m.itl_p95_ms, m.itl_p99_ms) == (4.5, 4.5, 4.5)
 
     def test_a_threshold_between_the_two_bases_now_passes(self):
         # The gap is what a queueing-inflated basis costs: TPOT 4.5 ms is inside a
         # 5 ms budget, the includes-TTFT reading of 6.1 ms is not, and it was the
         # one deciding capacity.
         m = _normalize(self._report(itl=4.5, tpot_incl_ttft=6.1), knob=4.0, index=0)
-        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=5.0)) is True
+        assert _passes_slo(m, slo_cfg(slo_avg_itl_ms=5.0)) is True
 
     def test_a_non_incremental_response_falls_back_instead_of_failing(self):
         # A server that answers in ONE chunk (whole output at once, common at low
@@ -1318,13 +1318,13 @@ class TestTpotIsDecodeOnly:
         # Failing here would bracket the ramp on its first point for every server
         # that batches its stream.
         m = _normalize(self._report(itl=0.0, tpot_incl_ttft=4.7), knob=4.0, index=0)
-        assert m.tpot_ms == 4.7
-        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=5.0)) is True
-        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=4.0)) is False
+        assert m.itl_ms == 4.7
+        assert _passes_slo(m, slo_cfg(slo_avg_itl_ms=5.0)) is True
+        assert _passes_slo(m, slo_cfg(slo_avg_itl_ms=4.0)) is False
 
     def test_neither_basis_measured_still_fails_closed(self):
         m = _normalize(self._report(itl=0.0, tpot_incl_ttft=0.0), knob=4.0, index=0)
-        assert _passes_slo(m, slo_cfg(slo_avg_tpot_ms=5.0)) is False
+        assert _passes_slo(m, slo_cfg(slo_avg_itl_ms=5.0)) is False
 
     def test_an_unset_threshold_is_still_ignored(self):
         # The fail-closed rule applies to SET thresholds only: a zero-valued metric
