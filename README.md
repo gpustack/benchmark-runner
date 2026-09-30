@@ -453,6 +453,13 @@ If a dataset filename contains "sharegpt" and ends with `.json` or `.jsonl`,
 Benchmark Runner will convert it to a GuideLLM-compatible JSONL file before running
 the benchmark.
 
+Use `--sharegpt-min-input-tokens`, `--sharegpt-max-input-tokens`, or both to keep
+first-turn prompts whose token counts meet the supplied inclusive limits.
+`--sharegpt-max-output-tokens` optionally sets the maximum output tokens requested
+for every retained sample. If omitted, each sample uses its original answer's
+token length. Token counts use the processor supplied to the run. A
+range with no matching samples fails before the benchmark starts.
+
 The conversion is **single-turn**: `sharegpt_to_guidellm.extract_first_turn` keeps
 only the first human->gpt pair of each conversation. Multi-turn is therefore
 synthetic-only — `--data "...,turns=N"` on GuideLLM's `synthetic_text` source. Passing

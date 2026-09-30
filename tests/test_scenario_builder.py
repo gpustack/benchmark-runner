@@ -8,6 +8,31 @@ from benchmark_runner.scenario_builder import (
 )
 
 
+def test_sharegpt_options_reach_dataset_preparation(monkeypatch):
+    seen = {}
+
+    def prepare(data, **kwargs):
+        seen.update(kwargs)
+        return ["converted_sharegpt.jsonl"]
+
+    monkeypatch.setattr("benchmark_runner.scenario_builder.prepare_datasets", prepare)
+    build_scenario_args(
+        dict(
+            backend_kwargs={"target": "http://127.0.0.1:8000"},
+            data=("sharegpt.json",),
+            outputs=("bench.dual_json",),
+            profile="constant",
+            rate=[2.0],
+            sharegpt_input_min=256,
+            sharegpt_input_max=2048,
+            sharegpt_max_output_tokens=128,
+        )
+    )
+    assert seen["input_min"] == 256
+    assert seen["input_max"] == 2048
+    assert seen["output_tokens"] == 128
+
+
 def base_kwargs(**extra):
     """The minimum a real run supplies, plus whatever the case overrides."""
     return dict(

@@ -701,6 +701,19 @@ def benchmark():
     ),
 )
 @click.option(
+    "--sharegpt-min-input-tokens",
+    "sharegpt_input_min",
+    type=click.IntRange(min=1),
+    default=None,
+)
+@click.option(
+    "--sharegpt-max-input-tokens",
+    "sharegpt_input_max",
+    type=click.IntRange(min=1),
+    default=None,
+)
+@click.option("--sharegpt-max-output-tokens", type=click.IntRange(min=1), default=None)
+@click.option(
     "--data-column-mapper",
     default=_opt_default("data_column_mapper"),
     callback=_cb_parse_json,
@@ -955,6 +968,13 @@ def benchmark():
 def run(**kwargs):  # noqa: C901
     # Only set CLI args that differ from click defaults
     kwargs = cli_tools.set_if_not_default(click.get_current_context(), **kwargs)
+    input_min = kwargs.get("sharegpt_input_min")
+    input_max = kwargs.get("sharegpt_input_max")
+    if input_min is not None and input_max is not None and input_min > input_max:
+        raise click.BadParameter(
+            "must not exceed --sharegpt-max-input-tokens",
+            param_hint="--sharegpt-min-input-tokens",
+        )
     apply_macos_runtime_workarounds(kwargs)
 
     # guidellm 0.7.x: target/model are backend concerns and are folded into the
@@ -1266,6 +1286,9 @@ def run(**kwargs):  # noqa: C901
                 data_sources,
                 tokenizer=str(kwargs.get("processor") or ""),
                 max_items=warm_items,
+                input_min=input_min,
+                input_max=input_max,
+                output_tokens=kwargs.get("sharegpt_max_output_tokens"),
             )
         _log(
             f"Auto-tune ramp: axis={axis} target={cfg.target} "

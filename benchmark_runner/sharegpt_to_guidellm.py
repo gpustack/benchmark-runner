@@ -127,6 +127,9 @@ def convert_sharegpt_to_guidellm(
     tokenizer_name: str,
     max_items: int = None,
     output_format: str = "jsonl",
+    input_min: int | None = None,
+    input_max: int | None = None,
+    output_tokens: int | None = None,
 ) -> dict:
     """
     Convert ShareGPT dataset to guidellm-compatible format.
@@ -139,6 +142,7 @@ def convert_sharegpt_to_guidellm(
     records = []
     written = 0
     skipped = 0
+    complete = True
     # Progress logging: log every 10000 processed samples
 
     logger.info(f"Starting conversion from {input_file} to {output_file}")
@@ -154,10 +158,22 @@ def convert_sharegpt_to_guidellm(
                 )
             continue
         prompt, completion = result
-        record = build_guidellm_record(prompt, completion, tokenizer)
+        if input_min is not None or input_max is not None:
+            input_tokens = count_tokens(tokenizer, prompt)
+            if (input_min is not None and input_tokens < input_min) or (
+                input_max is not None and input_tokens > input_max
+            ):
+                skipped += 1
+                continue
+        record = (
+            {"text": prompt, "output_tokens_count": output_tokens}
+            if output_tokens is not None
+            else build_guidellm_record(prompt, completion, tokenizer)
+        )
         records.append(record)
         written += 1
         if max_items is not None and written == max_items:
+            complete = False
             break
         if idx % 10000 == 0:
             logger.info(
@@ -167,11 +183,18 @@ def convert_sharegpt_to_guidellm(
     logger.info(
         f"Progress: processed={idx}, written={written}, skipped={skipped} (final)"
     )
+    if not written:
+        raise ValueError("No ShareGPT samples match the input token range")
     if output_format == "jsonl":
         write_jsonl(output_file, records)
     else:
         write_json(output_file, records)
-    return {"written": written, "skipped": skipped, "output": output_file}
+    return {
+        "written": written,
+        "skipped": skipped,
+        "output": output_file,
+        "complete": complete,
+    }
 
 
 def main() -> None:

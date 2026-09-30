@@ -25,6 +25,29 @@ def test_auto_tune_rejects_explicit_profile():
     assert "mutually exclusive" in result.output
 
 
+def test_sharegpt_rejects_inverted_input_range():
+    result = CliRunner().invoke(
+        cli,
+        [
+            "benchmark",
+            "run",
+            "--sharegpt-min-input-tokens",
+            "2048",
+            "--sharegpt-max-input-tokens",
+            "256",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "must not exceed --sharegpt-max-input-tokens" in result.output
+
+
+def test_sharegpt_max_output_flag_is_available():
+    params = {p.name: p for p in cli.commands["benchmark"].commands["run"].params}
+    assert "--sharegpt-min-input-tokens" in params["sharegpt_input_min"].opts
+    assert "--sharegpt-max-input-tokens" in params["sharegpt_input_max"].opts
+    assert "--sharegpt-max-output-tokens" in params["sharegpt_max_output_tokens"].opts
+
+
 def test_auto_tune_rejects_stages():
     result = CliRunner().invoke(
         cli, ["benchmark", "run", "--auto-tune", "--stages", '[{"rate": 2}]']

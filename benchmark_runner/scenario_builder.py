@@ -134,6 +134,9 @@ def _build_data(
     data_args_list: list[Any],
     tokenizer_model: str | None,
     max_items: int | None,
+    input_min: int | None = None,
+    input_max: int | None = None,
+    output_tokens: int | None = None,
 ) -> list[dict[str, Any]]:
     """Build ``spec.data`` (a list of DataArgs dicts) from --data / --data-args."""
     extra: dict[str, Any] = {}
@@ -154,7 +157,12 @@ def _build_data(
             # File / HF source: run through the ShareGPT adapter (converts a
             # ShareGPT json/jsonl to a guidellm jsonl) then wrap.
             prepared = prepare_datasets(
-                [parsed], tokenizer=tokenizer_model or "", max_items=max_items
+                [parsed],
+                tokenizer=tokenizer_model or "",
+                max_items=max_items,
+                input_min=input_min,
+                input_max=input_max,
+                output_tokens=output_tokens,
             )
             for src in prepared:
                 result.append(_wrap_file_source(src, extra))
@@ -293,7 +301,15 @@ def build_scenario_args(kwargs: dict[str, Any]) -> BenchmarkScenario:  # noqa: C
     else:
         mr = kwargs.get("max_requests")
         max_items = int(mr) if isinstance(mr, int) and mr > 0 else None
-    data = _build_data(data_values, data_args_list, tokenizer.get("model"), max_items)
+    data = _build_data(
+        data_values,
+        data_args_list,
+        tokenizer.get("model"),
+        max_items,
+        input_min=kwargs.pop("sharegpt_input_min", None),
+        input_max=kwargs.pop("sharegpt_input_max", None),
+        output_tokens=kwargs.pop("sharegpt_max_output_tokens", None),
+    )
     if data:
         spec["data"] = data
 
