@@ -721,7 +721,21 @@ async def run_ramp(  # noqa: C901
         # Steps left to close the (lo, hi) bracket. Both Phase-2 searches shrink it
         # by roughly half per point (SLO bisection exactly; the unimodal search by
         # whichever side survives the local comparison), so log2 estimates both.
-        return max(1, math.ceil(math.log2(max(2.0, hi - lo))))
+        intervals = (hi - lo) / _search_precision(lo)
+        return max(1, math.ceil(math.log2(max(2.0, intervals))))
+
+    def _search_precision(lo: float) -> float:
+        # Concurrency is discrete. Rate intervals close within 1% of their lower
+        # endpoint, bounded by 1e-6 and 1 req/s to limit both tiny and large sweeps.
+        if cfg.axis == "concurrency":
+            return 1.0
+        return max(1e-6, min(1.0, lo * 0.01))
+
+    def _midpoint(lo: float, hi: float, *, round_up: bool = False) -> float:
+        mid = lo + (hi - lo) / 2
+        if cfg.axis == "concurrency":
+            return float(math.ceil(mid) if round_up else math.floor(mid))
+        return mid
 
     async def _default_run_point(knob: float, index: int) -> Optional[PointMetrics]:
         # number = max(min_requests, round(knob * multiplier)) -> max_requests
@@ -1073,10 +1087,10 @@ async def run_ramp(  # noqa: C901
         # `budget_points` whenever the point count happened to land on the cap:
         # `--max-points 6` and `--max-points 12` produced the same six points and
         # the same boundary, yet reported "truncated, raise the cap" vs "converged".
-        while hi - lo > 1:
-            mid = math.floor((lo + hi) / 2)
-            if mid <= lo:
-                break  # nothing left on the integer grid -> converged
+        while hi - lo > _search_precision(lo):
+            mid = _midpoint(lo, hi)
+            if not lo < mid < hi:
+                break  # no representable interior knob -> converged
             if (spent := _budget_reason(len(points))) is not None:
                 stop_reason = spent
                 break
@@ -1098,7 +1112,7 @@ async def run_ramp(  # noqa: C901
     # Phase 1's geometric bracket (prev_prev, knob) is dropped onto a three-point
     # search that keeps a < b < c with f(b) the running max, then probes the
     # MIDPOINT of the wider side and shrinks toward the peak (a golden-section /
-    # ternary hybrid on the integer knob, reusing Phase-1 points).
+    # ternary hybrid, reusing Phase-1 points).
     #
     # This replaces evalscope's (and our former) "bisect and only walk right when
     # a point beats the running best" scheme: that judged direction by comparing
@@ -1136,10 +1150,10 @@ async def run_ramp(  # noqa: C901
         # above for why the loop predicate is the wrong place for it. Here it matters
         # twice over, because this search can also run out of INTEGER GRID while the
         # bracket is still 2 wide, which is convergence and not a budget problem.
-        while (c - a) > 1:
-            # Midpoint of each side; must be a fresh interior integer knob.
-            xl = math.floor((a + b) / 2)
-            xr = math.ceil((b + c) / 2)
+        while (c - a) > _search_precision(a):
+            # Each candidate must be a fresh interior knob on the selected axis.
+            xl = _midpoint(a, b)
+            xr = _midpoint(b, c, round_up=True)
             left_ok = a < xl < b and float(xl) not in measured
             right_ok = b < xr < c and float(xr) not in measured
             if left_ok and right_ok:
@@ -1149,7 +1163,7 @@ async def run_ramp(  # noqa: C901
             elif right_ok:
                 use_left = False
             else:
-                break  # integer grid exhausted on both sides -> converged
+                break  # no fresh interior knobs on either side -> converged
             gain_evidence = _throughput_gain_evidence(points, gain_window)
             if gain_evidence is not None:
                 stop_reason = STOP_THROUGHPUT_GAIN_CONVERGED

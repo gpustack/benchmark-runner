@@ -85,6 +85,14 @@ throughput".
 | `rate` (default) | `constant` | requests/second offered | open |
 | `concurrency` | `concurrent` | in-flight streams | closed |
 
+Request-rate bounds and measured points support positive fractions, such as
+`--lower-bound 0.1 --upper-bound 0.8`. Phase 2 uses a request-rate interval
+tolerance of 1% of its lower endpoint, clamped between 0.000001 and 1
+request/second. Concurrency uses whole streams and exhausts its search grid when
+no interior integer remains. Throughput-gain convergence and point/time budgets
+can end refinement before it reaches the interval tolerance; no measurement
+accuracy is implied by the interval width.
+
 ```bash
 # Peak throughput on the request-rate axis.
 benchmark-runner benchmark run \

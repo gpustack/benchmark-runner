@@ -37,6 +37,7 @@ from benchmark_runner.auto_tune import (
     STOP_POINT_FAILED,
     STOP_PROBE_BOUND,
     STOP_SLO_FAILED,
+    STOP_THROUGHPUT_GAIN_CONVERGED,
     STOP_UPPER_BOUND,
     run_ramp,
 )
@@ -668,6 +669,169 @@ def test_slo_binary_search_finds_boundary():
     assert any(8 < k < 16 for k in knobs(pts))
 
 
+@pytest.mark.parametrize(
+    "lower,upper,boundary,tolerance",
+    [
+        (0.1, 0.8, 0.3, 0.003),
+        (0.1, 0.8, 0.273, 0.00273),
+        (0.29, 0.31, 0.3, 0.003),
+        (0.001, 0.008, 0.003, 0.00003),
+        (0.0001, 0.0008, 0.0003, 0.000003),
+        (0.00001, 0.00008, 0.00003, 0.000001),
+        (100, 800, 300, 1.0),
+    ],
+)
+def test_rate_slo_refines_boundary(lower, upper, boundary, tolerance):
+    outcome = run_outcome(
+        slo_cfg(
+            lower_bound=lower,
+            upper_bound=upper,
+            max_points=40,
+            slo_avg_latency_ms=100.0,
+        ),
+        make_run_point(climbing, latency_fn=lambda k: 100 * k / boundary),
+    )
+    lo, hi = outcome.slo_bracket
+    assert lo <= boundary < hi
+    assert hi - lo <= tolerance
+    assert outcome.stop_reason == STOP_CONVERGED
+    ks = knobs(outcome.points)
+    assert len(ks) == len(set(ks))
+    assert all(lower <= k <= upper for k in ks)
+
+
+@pytest.mark.parametrize(
+    "lower,upper,peak,tolerance",
+    [
+        (0.1, 0.8, 0.3, 0.003),
+        (0.1, 0.8, 0.273, 0.00273),
+        (0.29, 0.31, 0.3, 0.003),
+        (0.001, 0.008, 0.003, 0.00003),
+        (0.0001, 0.0008, 0.0003, 0.000003),
+        (0.00001, 0.00008, 0.00003, 0.000001),
+    ],
+)
+def test_rate_saturation_refines_peak(lower, upper, peak, tolerance):
+    outcome = run_outcome(
+        sat_cfg(axis="rate", lower_bound=lower, upper_bound=upper, max_points=40),
+        make_run_point(lambda k: max(0, 1 - abs(k - peak) / peak)),
+    )
+    assert abs(peak_knob(outcome.points) - peak) <= tolerance
+    assert outcome.stop_reason == STOP_THROUGHPUT_GAIN_CONVERGED
+    evidence = outcome.to_dict()["throughput_gain_evidence"]
+    assert evidence["lower_rate"] < evidence["best_rate"] < evidence["upper_rate"]
+    assert evidence["gain_percent"] < evidence["threshold_percent"]
+    ks = knobs(outcome.points)
+    assert len(ks) == len(set(ks))
+    assert all(lower <= k <= upper for k in ks)
+
+
+@pytest.mark.parametrize("target", ["slo", "saturation"])
+def test_fractional_refinement_preserves_point_budget_reasons(target):
+    cfg = dict(axis="rate", lower_bound=0.1, upper_bound=0.8)
+    if target == "slo":
+        cfg["slo_avg_latency_ms"] = 100.0
+
+    def rp():
+        return make_run_point(
+            climbing if target == "slo" else lambda k: max(0, 1 - abs(k - 0.3) / 0.3),
+            latency_fn=lambda k: 100 * k / 0.3,
+        )
+
+    roomy = run_outcome(sat_cfg(max_points=40, **cfg), rp())
+    count = len(roomy.points)
+    assert count > 3
+    exact = run_outcome(sat_cfg(max_points=count, **cfg), rp())
+    short = run_outcome(sat_cfg(max_points=count - 1, **cfg), rp())
+    assert knobs(exact.points) == knobs(roomy.points)
+    expected_stop = (
+        STOP_CONVERGED if target == "slo" else STOP_THROUGHPUT_GAIN_CONVERGED
+    )
+    assert exact.stop_reason == roomy.stop_reason == expected_stop
+    assert knobs(short.points) == knobs(roomy.points)[:-1]
+    assert short.stop_reason == STOP_BUDGET_POINTS
+
+
+@pytest.mark.parametrize("target", ["slo", "saturation"])
+def test_fractional_refinement_preserves_time_budget(target, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr("benchmark_runner.auto_tune.time.monotonic", lambda: clock[0])
+
+    async def rp(knob, index):
+        clock[0] += 1.0
+        return make_metrics(
+            knob,
+            index,
+            climbing(knob) if target == "slo" else max(0, 1 - abs(knob - 0.3) / 0.3),
+            latency=100 * knob / 0.3,
+        )
+
+    cfg = dict(axis="rate", lower_bound=0.1, upper_bound=0.8, max_total_seconds=3.5)
+    if target == "slo":
+        cfg["slo_avg_latency_ms"] = 100.0
+    outcome = run_outcome(sat_cfg(**cfg), rp)
+    assert len(outcome.points) == 4
+    assert outcome.stop_reason == STOP_BUDGET_SECONDS
+
+
+def test_fractional_refinement_progress_estimates_subunit_interval():
+    sp = _RecordingProgress()
+    remaining = []
+    rp = make_run_point(climbing, latency_fn=lambda k: 100 * k / 0.3)
+
+    async def record(knob, index):
+        remaining.append(sp.run_total - sp.run_index)
+        return await rp(knob, index)
+
+    outcome = asyncio.run(
+        run_ramp(
+            slo_cfg(lower_bound=0.1, upper_bound=0.8, slo_avg_latency_ms=100.0),
+            {},
+            "t",
+            server_progress=sp,
+            run_point=record,
+        )
+    )
+    assert outcome.stop_reason == STOP_CONVERGED
+    assert remaining[3] >= 6
+    assert remaining[-1] == 2
+    assert remaining[3:] == sorted(remaining[3:], reverse=True)
+
+
+@pytest.mark.parametrize("target", ["slo", "saturation"])
+def test_rate_interval_below_absolute_precision_converges_without_duplicates(target):
+    cfg = dict(axis="rate", lower_bound=1e-12, upper_bound=2e-12, max_points=2)
+    if target == "slo":
+        cfg["slo_avg_latency_ms"] = 100.0
+    outcome = run_outcome(
+        sat_cfg(**cfg),
+        make_run_point(
+            climbing if target == "slo" else lambda k: 1.0,
+            latency_fn=lambda k: 100 * k / 1.5e-12,
+        ),
+    )
+    assert knobs(outcome.points) == [1e-12, 2e-12]
+    assert outcome.stop_reason == STOP_CONVERGED
+
+
+@pytest.mark.parametrize(
+    "target,expected", [("slo", [1, 2, 4, 8, 6, 5]), ("saturation", [1, 2, 4, 3])]
+)
+def test_concurrency_refinement_keeps_integer_grid(target, expected):
+    cfg = dict(axis="concurrency", lower_bound=1, upper_bound=8, max_points=30)
+    if target == "slo":
+        cfg["slo_avg_latency_ms"] = 100.0
+    outcome = run_outcome(
+        sat_cfg(**cfg),
+        make_run_point(
+            climbing if target == "slo" else lambda k: max(0, 1 - abs(k - 3) / 3),
+            latency_fn=lambda k: 100 * k / 5,
+        ),
+    )
+    assert knobs(outcome.points) == expected
+    assert outcome.stop_reason == STOP_CONVERGED
+
+
 def test_slo_all_pass_to_upper_bound():
     rp = make_run_point(climbing, latency_fn=lambda k: k * 1.0)
     pts = run(slo_cfg(upper_bound=8, slo_avg_latency_ms=100000.0), rp)
@@ -694,13 +858,13 @@ def test_slo_pass_then_fail_creates_bracket():
 
 def test_slo_success_floor_fails_point():
     # Latency always passes, but success drops below the floor at knob >= 8, so
-    # the SLO boundary is the largest knob still under 8 -> 7 (bisected in (4,8)).
+    # the passing boundary must approach 8 from below, within rate precision.
     def success_fn(k):
         return 0.5 if k >= 8 else 1.0
 
     rp = make_run_point(climbing, latency_fn=lambda k: 1.0, success_fn=success_fn)
     pts = run(slo_cfg(slo_avg_latency_ms=100000.0), rp)
-    assert _max_passing_knob(pts, 100000.0) == 7.0
+    assert 7.92 <= _max_passing_knob(pts, 100000.0) < 8.0
     # The failing point (8) must have been sampled to close the bracket.
     assert 8.0 in knobs(pts)
 
@@ -803,7 +967,9 @@ class TestSloContinuesPastThroughputPlateaus:
             ),
         )
         assert outcome.stop_reason == STOP_CONVERGED
-        assert outcome.slo_bracket == (70.0, 71.0)
+        lower, upper = outcome.slo_bracket
+        assert lower == 70.0
+        assert 70.0 < upper <= 70.7
         assert 64.0 in knobs(outcome.points)
 
     def test_flat_throughput_still_respects_the_point_budget(self):
